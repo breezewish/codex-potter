@@ -2,7 +2,7 @@
 //!
 //! It is responsible for:
 //!
-//! - Editing the input buffer (a [`TextArea`]), including placeholder "elements" for attachments.
+//! - Editing the input buffer (a [`TextArea`]), including placeholder "elements" for large pastes.
 //! - Routing keys to the active popup (currently file search).
 //! - Handling submit vs newline on Enter.
 //! - Inserting literal tab characters on Tab (when no popup is visible).
@@ -113,19 +113,15 @@ use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
 use codex_file_search::FileMatch;
-use codex_protocol::models::local_image_label_text;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
-use crate::clipboard_paste::normalize_pasted_path;
-use crate::clipboard_paste::pasted_image_format;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -142,23 +138,16 @@ pub enum InputResult {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct AttachedImage {
-    placeholder: String,
-    path: PathBuf,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ChatComposerDraft {
     text: String,
     cursor: usize,
     pending_pastes: Vec<(String, String)>,
     large_paste_counters: HashMap<usize, usize>,
-    attached_images: Vec<(String, PathBuf)>,
 }
 
 impl ChatComposerDraft {
     fn is_empty(&self) -> bool {
-        self.text.is_empty() && self.pending_pastes.is_empty() && self.attached_images.is_empty()
+        self.text.is_empty() && self.pending_pastes.is_empty()
     }
 }
 
@@ -175,7 +164,6 @@ pub struct ChatComposer {
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
     large_paste_counters: HashMap<usize, usize>,
-    attached_images: Vec<AttachedImage>,
     placeholder_text: String,
     is_task_running: bool,
     /// When false, the composer is temporarily read-only (e.g. during sandbox setup).
@@ -220,7 +208,6 @@ impl ChatComposer {
             current_file_query: None,
             pending_pastes: Vec::new(),
             large_paste_counters: HashMap::new(),
-            attached_images: Vec::new(),
             placeholder_text,
             is_task_running: false,
             input_enabled: true,
@@ -279,8 +266,6 @@ impl ChatComposer {
     ///
     /// - If the paste is larger than `LARGE_PASTE_CHAR_THRESHOLD` chars, inserts a placeholder
     ///   element (expanded on submit) and stores the full text in `pending_pastes`.
-    /// - Otherwise, if the paste looks like an image path, attaches the image and inserts a
-    ///   trailing space so the user can keep typing naturally.
     /// - Otherwise, inserts the pasted text directly into the textarea.
     ///
     /// In all cases, clears any paste-burst Enter suppression state so a real paste cannot affect
@@ -291,8 +276,6 @@ impl ChatComposer {
             let placeholder = self.next_large_paste_placeholder(char_count);
             self.textarea.insert_element(&placeholder);
             self.pending_pastes.push((placeholder, pasted));
-        } else if char_count > 1 && self.handle_paste_image_path(pasted.clone()) {
-            self.textarea.insert_str(" ");
         } else {
             self.textarea.insert_str(&pasted);
         }
@@ -300,29 +283,6 @@ impl ChatComposer {
         self.paste_burst.clear_after_explicit_paste();
         self.sync_popups();
         true
-    }
-
-    pub fn handle_paste_image_path(&mut self, pasted: String) -> bool {
-        let Some(path_buf) = normalize_pasted_path(&pasted) else {
-            return false;
-        };
-
-        // normalize_pasted_path already handles Windows → WSL path conversion,
-        // so we can directly try to read the image dimensions.
-        match image::image_dimensions(&path_buf) {
-            Ok((width, height)) => {
-                tracing::info!("OK: {pasted}");
-                tracing::debug!("image dimensions={}x{}", width, height);
-                let format = pasted_image_format(&path_buf);
-                tracing::debug!("attached image format={}", format.label());
-                self.attach_image(path_buf);
-                true
-            }
-            Err(err) => {
-                tracing::trace!("ERR: {err}");
-                false
-            }
-        }
     }
 
     /// Enable or disable paste-burst handling.
@@ -336,7 +296,7 @@ impl ChatComposer {
     /// - First, flush any held/buffered text immediately via
     ///   [`PasteBurst::flush_before_modified_input`], and feed it through `handle_paste(String)`.
     ///   This preserves user input and routes it through the same integration path as explicit
-    ///   pastes (large-paste placeholders, image-path detection, and popup sync).
+    ///   pastes (large-paste placeholders and popup sync).
     /// - Then clear the burst timing and Enter-suppression window via
     ///   [`PasteBurst::clear_after_explicit_paste`].
     ///
@@ -355,71 +315,15 @@ impl ChatComposer {
     }
 
     /// Replace the composer content with text from an external editor.
-    /// Clears pending paste placeholders and keeps only attachments whose
-    /// placeholder labels still appear in the new text. Cursor is placed at
-    /// the end after rebuilding elements.
+    ///
+    /// This clears any pending large-paste placeholders, since the returned text is now the
+    /// single source of truth.
     pub fn apply_external_edit(&mut self, text: String) {
         self.pending_pastes.clear();
+        self.large_paste_counters.clear();
 
-        // Count placeholder occurrences in the new text.
-        let mut placeholder_counts: HashMap<String, usize> = HashMap::new();
-        for placeholder in self.attached_images.iter().map(|img| &img.placeholder) {
-            if placeholder_counts.contains_key(placeholder) {
-                continue;
-            }
-            let count = text.match_indices(placeholder).count();
-            if count > 0 {
-                placeholder_counts.insert(placeholder.clone(), count);
-            }
-        }
-
-        // Keep attachments only while we have matching occurrences left.
-        let mut kept_images = Vec::new();
-        for img in self.attached_images.drain(..) {
-            if let Some(count) = placeholder_counts.get_mut(&img.placeholder)
-                && *count > 0
-            {
-                *count -= 1;
-                kept_images.push(img);
-            }
-        }
-        self.attached_images = kept_images;
-
-        // Rebuild textarea so placeholders become elements again.
-        self.textarea.set_text("");
-        let mut remaining: HashMap<&str, usize> = HashMap::new();
-        for img in &self.attached_images {
-            *remaining.entry(img.placeholder.as_str()).or_insert(0) += 1;
-        }
-
-        let mut occurrences: Vec<(usize, &str)> = Vec::new();
-        for placeholder in remaining.keys() {
-            for (pos, _) in text.match_indices(placeholder) {
-                occurrences.push((pos, *placeholder));
-            }
-        }
-        occurrences.sort_unstable_by_key(|(pos, _)| *pos);
-
-        let mut idx = 0usize;
-        for (pos, ph) in occurrences {
-            let Some(count) = remaining.get_mut(ph) else {
-                continue;
-            };
-            if *count == 0 {
-                continue;
-            }
-            if pos > idx {
-                self.textarea.insert_str(&text[idx..pos]);
-            }
-            self.textarea.insert_element(ph);
-            *count -= 1;
-            idx = pos + ph.len();
-        }
-        if idx < text.len() {
-            self.textarea.insert_str(&text[idx..]);
-        }
-
-        self.textarea.set_cursor(self.textarea.text().len());
+        self.textarea.set_text(&text);
+        self.textarea.set_cursor(text.len());
         self.sync_popups();
     }
 
@@ -437,11 +341,6 @@ impl ChatComposer {
             cursor: self.textarea.cursor(),
             pending_pastes: self.pending_pastes.clone(),
             large_paste_counters: self.large_paste_counters.clone(),
-            attached_images: self
-                .attached_images
-                .iter()
-                .map(|img| (img.placeholder.clone(), img.path.clone()))
-                .collect(),
         };
 
         if draft.is_empty() { None } else { Some(draft) }
@@ -458,12 +357,6 @@ impl ChatComposer {
         self.pending_pastes
             .retain(|(placeholder, _)| text.contains(placeholder));
         self.large_paste_counters = draft.large_paste_counters;
-        self.attached_images = draft
-            .attached_images
-            .into_iter()
-            .filter(|(placeholder, _)| text.contains(placeholder))
-            .map(|(placeholder, path)| AttachedImage { placeholder, path })
-            .collect();
 
         // Rebuild textarea so placeholder labels become elements again.
         self.textarea.set_text("");
@@ -473,9 +366,6 @@ impl ChatComposer {
         let mut placeholder_set: HashSet<&str> = HashSet::new();
         for (placeholder, _) in &self.pending_pastes {
             placeholder_set.insert(placeholder);
-        }
-        for img in &self.attached_images {
-            placeholder_set.insert(&img.placeholder);
         }
 
         let mut placeholders: Vec<&str> = placeholder_set.into_iter().collect();
@@ -527,10 +417,9 @@ impl ChatComposer {
 
     /// Replace the entire composer content with `text` and reset cursor.
     pub fn set_text_content(&mut self, text: String) {
-        // Clear any existing content, placeholders, and attachments first.
+        // Clear any existing content and placeholders first.
         self.textarea.set_text("");
         self.pending_pastes.clear();
-        self.attached_images.clear();
         self.textarea.set_text(&text);
         self.textarea.set_cursor(0);
         self.sync_popups();
@@ -551,23 +440,6 @@ impl ChatComposer {
     #[cfg(test)]
     pub fn current_text(&self) -> String {
         self.textarea.text().to_string()
-    }
-
-    /// Insert an attachment placeholder and track it for the next submission.
-    pub fn attach_image(&mut self, path: PathBuf) {
-        let image_number = self.attached_images.len() + 1;
-        let placeholder = local_image_label_text(image_number);
-        // Insert as an element to match large paste placeholder behavior:
-        // styled distinctly and treated atomically for cursor/mutations.
-        self.textarea.insert_element(&placeholder);
-        self.attached_images
-            .push(AttachedImage { placeholder, path });
-    }
-
-    #[cfg(test)]
-    pub fn take_recent_submission_images(&mut self) -> Vec<PathBuf> {
-        let images = std::mem::take(&mut self.attached_images);
-        images.into_iter().map(|img| img.path).collect()
     }
 
     /// Flushes any due paste-burst state.
@@ -657,40 +529,9 @@ impl ChatComposer {
             return (InputResult::None, false);
         }
 
-        let result = match key_event {
-            KeyEvent {
-                code: KeyCode::Char(c),
-                modifiers,
-                kind: KeyEventKind::Press,
-                ..
-            } if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                && c.eq_ignore_ascii_case(&'v') =>
-            {
-                match crate::clipboard_paste::paste_image_to_temp_png() {
-                    Ok((path, info)) => {
-                        tracing::debug!(
-                            "pasted image size={}x{} format={}",
-                            info.width,
-                            info.height,
-                            info.encoded_format.label()
-                        );
-                        self.attach_image(path);
-                    }
-                    Err(err) => {
-                        tracing::warn!("failed to paste image: {err}");
-                        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                            crate::history_cell::new_error_event(format!(
-                                "Failed to paste image: {err}",
-                            )),
-                        )));
-                    }
-                }
-                (InputResult::None, true)
-            }
-            other => match &mut self.active_popup {
-                ActivePopup::File(_) => self.handle_key_event_with_file_popup(other),
-                ActivePopup::None => self.handle_key_event_without_popup(other),
-            },
+        let result = match &mut self.active_popup {
+            ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
+            ActivePopup::None => self.handle_key_event_without_popup(key_event),
         };
 
         // Update (or hide/show) popup after processing the key.
@@ -860,64 +701,13 @@ impl ChatComposer {
                 };
 
                 let sel_path = sel.to_string();
-                // If selected path looks like an image (png/jpeg), attach as image instead of inserting text.
-                let is_image = Self::is_image_path(&sel_path);
-                if is_image {
-                    // Determine dimensions; if that fails fall back to normal path insertion.
-                    let path_buf = PathBuf::from(&sel_path);
-                    match image::image_dimensions(&path_buf) {
-                        Ok((width, height)) => {
-                            tracing::debug!("selected image dimensions={}x{}", width, height);
-                            // Remove the current @token (mirror logic from insert_selected_path without inserting text)
-                            // using the flat text and byte-offset cursor API.
-                            let cursor_offset = self.textarea.cursor();
-                            let text = self.textarea.text();
-                            // Clamp to a valid char boundary to avoid panics when slicing.
-                            let safe_cursor = Self::clamp_to_char_boundary(text, cursor_offset);
-                            let before_cursor = &text[..safe_cursor];
-                            let after_cursor = &text[safe_cursor..];
-
-                            // Determine token boundaries in the full text.
-                            let start_idx = before_cursor
-                                .char_indices()
-                                .rfind(|(_, c)| c.is_whitespace())
-                                .map(|(idx, c)| idx + c.len_utf8())
-                                .unwrap_or(0);
-                            let end_rel_idx = after_cursor
-                                .char_indices()
-                                .find(|(_, c)| c.is_whitespace())
-                                .map(|(idx, _)| idx)
-                                .unwrap_or(after_cursor.len());
-                            let end_idx = safe_cursor + end_rel_idx;
-
-                            self.textarea.replace_range(start_idx..end_idx, "");
-                            self.textarea.set_cursor(start_idx);
-
-                            self.attach_image(path_buf);
-                            // Add a trailing space to keep typing fluid.
-                            self.textarea.insert_str(" ");
-                        }
-                        Err(err) => {
-                            tracing::trace!("image dimensions lookup failed: {err}");
-                            // Fallback to plain path insertion if metadata read fails.
-                            self.insert_selected_path(&sel_path);
-                        }
-                    }
-                } else {
-                    // Non-image: inserting file path.
-                    self.insert_selected_path(&sel_path);
-                }
+                self.insert_selected_path(&sel_path);
                 // No selection: treat Enter as closing the popup/session.
                 self.active_popup = ActivePopup::None;
                 (InputResult::None, true)
             }
             input => self.handle_input_basic(input),
         }
-    }
-
-    fn is_image_path(path: &str) -> bool {
-        let lower = path.to_ascii_lowercase();
-        lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
     }
 
     /// Extract a token prefixed with `prefix` under the cursor, if any.
@@ -1099,11 +889,9 @@ impl ChatComposer {
             self.pending_pastes.clear();
         }
 
-        // If there is neither text nor attachments, suppress submission entirely.
-        let has_attachments = !self.attached_images.is_empty();
         text = text.trim().to_string();
 
-        if text.is_empty() && !has_attachments {
+        if text.is_empty() {
             return None;
         }
         if !text.is_empty() {
@@ -1142,7 +930,6 @@ impl ChatComposer {
             if should_queue {
                 (InputResult::Queued(text), true)
             } else {
-                // Do not clear attached_images here; the caller can drain them via take_recent_submission_images().
                 (InputResult::Submitted(text), true)
             }
         } else {
@@ -1350,19 +1137,10 @@ impl ChatComposer {
         {
             self.handle_paste(pasted);
         }
-        // Backspace at the start of an image placeholder should delete that placeholder (rather
-        // than deleting content before it). Do this without scanning the full text by consulting
-        // the textarea's element list.
-        if matches!(input.code, KeyCode::Backspace)
-            && self.try_remove_image_element_at_cursor_start()
-        {
-            return (InputResult::None, true);
-        }
-
         // For non-char inputs (or after flushing), handle normally.
         // Track element removals so we can drop any corresponding placeholders without scanning
         // the full text. (Placeholders are atomic elements; when deleted, the element disappears.)
-        let elements_before = if self.pending_pastes.is_empty() && self.attached_images.is_empty() {
+        let elements_before = if self.pending_pastes.is_empty() {
             None
         } else {
             Some(self.textarea.element_payloads())
@@ -1397,65 +1175,15 @@ impl ChatComposer {
         (InputResult::None, true)
     }
 
-    fn try_remove_image_element_at_cursor_start(&mut self) -> bool {
-        if self.attached_images.is_empty() {
-            return false;
-        }
-
-        let p = self.textarea.cursor();
-        let Some(payload) = self.textarea.element_payload_starting_at(p) else {
-            return false;
-        };
-        let Some(idx) = self
-            .attached_images
-            .iter()
-            .position(|img| img.placeholder == payload)
-        else {
-            return false;
-        };
-
-        self.textarea.replace_range(p..p + payload.len(), "");
-        self.attached_images.remove(idx);
-        self.relabel_attached_images_and_update_placeholders();
-        true
-    }
-
     fn reconcile_deleted_elements(&mut self, elements_before: Vec<String>) {
         let elements_after: HashSet<String> =
             self.textarea.element_payloads().into_iter().collect();
 
-        let mut removed_any_image = false;
         for removed in elements_before
             .into_iter()
             .filter(|payload| !elements_after.contains(payload))
         {
             self.pending_pastes.retain(|(ph, _)| ph != &removed);
-
-            if let Some(idx) = self
-                .attached_images
-                .iter()
-                .position(|img| img.placeholder == removed)
-            {
-                self.attached_images.remove(idx);
-                removed_any_image = true;
-            }
-        }
-
-        if removed_any_image {
-            self.relabel_attached_images_and_update_placeholders();
-        }
-    }
-
-    fn relabel_attached_images_and_update_placeholders(&mut self) {
-        for idx in 0..self.attached_images.len() {
-            let expected = local_image_label_text(idx + 1);
-            let current = self.attached_images[idx].placeholder.clone();
-            if current == expected {
-                continue;
-            }
-
-            self.attached_images[idx].placeholder = expected.clone();
-            let _renamed = self.textarea.replace_element_payload(&current, &expected);
         }
     }
 
@@ -1683,17 +1411,12 @@ impl Renderable for ChatComposer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::ImageBuffer;
-    use image::Rgba;
     use pretty_assertions::assert_eq;
-    use std::path::PathBuf;
-    use tempfile::tempdir;
 
     use crate::app_event::AppEvent;
     use crate::app_event_sender::AppEventSender;
     use crate::bottom_pane::ChatComposer;
     use crate::bottom_pane::InputResult;
-    use crate::bottom_pane::chat_composer::AttachedImage;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::textarea::TextArea;
     use tokio::sync::mpsc::unbounded_channel;
@@ -2548,18 +2271,6 @@ End of payload.";
         }
     }
 
-    #[test]
-    fn image_placeholder_snapshots() {
-        snapshot_composer_state("image_placeholder_single", false, |composer| {
-            composer.attach_image(PathBuf::from("/tmp/image1.png"));
-        });
-
-        snapshot_composer_state("image_placeholder_multiple", false, |composer| {
-            composer.attach_image(PathBuf::from("/tmp/image1.png"));
-            composer.attach_image(PathBuf::from("/tmp/image2.png"));
-        });
-    }
-
     fn flush_after_paste_burst(composer: &mut ChatComposer) -> bool {
         std::thread::sleep(PasteBurst::recommended_active_flush_delay());
         composer.flush_paste_burst_if_due()
@@ -2862,264 +2573,6 @@ End of payload.";
         );
     }
 
-    // --- Image attachment tests ---
-    #[test]
-    fn attach_image_and_submit_includes_image_paths() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-        let path = PathBuf::from("/tmp/image1.png");
-        composer.attach_image(path.clone());
-        composer.handle_paste(" hi".into());
-        let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        match result {
-            InputResult::Queued(text) => assert_eq!(text, "[Image #1] hi"),
-            _ => panic!("expected Queued"),
-        }
-        let imgs = composer.take_recent_submission_images();
-        assert_eq!(vec![path], imgs);
-    }
-
-    #[test]
-    fn attach_image_without_text_submits_empty_text_and_images() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-        let path = PathBuf::from("/tmp/image2.png");
-        composer.attach_image(path.clone());
-        let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        match result {
-            InputResult::Queued(text) => assert_eq!(text, "[Image #1]"),
-            _ => panic!("expected Queued"),
-        }
-        let imgs = composer.take_recent_submission_images();
-        assert_eq!(imgs.len(), 1);
-        assert_eq!(imgs[0], path);
-        assert!(composer.attached_images.is_empty());
-    }
-
-    #[test]
-    fn duplicate_image_placeholders_get_suffix() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-        let path = PathBuf::from("/tmp/image_dup.png");
-        composer.attach_image(path.clone());
-        composer.handle_paste(" ".into());
-        composer.attach_image(path);
-
-        let text = composer.textarea.text().to_string();
-        assert!(text.contains("[Image #1]"));
-        assert!(text.contains("[Image #2]"));
-        assert_eq!(composer.attached_images[0].placeholder, "[Image #1]");
-        assert_eq!(composer.attached_images[1].placeholder, "[Image #2]");
-    }
-
-    #[test]
-    fn image_placeholder_backspace_behaves_like_text_placeholder() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-        let path = PathBuf::from("/tmp/image3.png");
-        composer.attach_image(path.clone());
-        let placeholder = composer.attached_images[0].placeholder.clone();
-
-        // Case 1: backspace at end
-        composer.textarea.move_cursor_to_end_of_line(false);
-        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-        assert!(!composer.textarea.text().contains(&placeholder));
-        assert!(composer.attached_images.is_empty());
-
-        // Re-add and test backspace in middle: should break the placeholder string
-        // and drop the image mapping (same as text placeholder behavior).
-        composer.attach_image(path);
-        let placeholder2 = composer.attached_images[0].placeholder.clone();
-        // Move cursor to roughly middle of placeholder
-        if let Some(start_pos) = composer.textarea.text().find(&placeholder2) {
-            let mid_pos = start_pos + (placeholder2.len() / 2);
-            composer.textarea.set_cursor(mid_pos);
-            composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-            assert!(!composer.textarea.text().contains(&placeholder2));
-            assert!(composer.attached_images.is_empty());
-        } else {
-            panic!("Placeholder not found in textarea");
-        }
-    }
-
-    #[test]
-    fn backspace_with_multibyte_text_before_placeholder_does_not_panic() {
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-
-        // Insert an image placeholder at the start
-        let path = PathBuf::from("/tmp/image_multibyte.png");
-        composer.attach_image(path);
-        // Add multibyte text after the placeholder
-        composer.textarea.insert_str("にほんご");
-
-        // Cursor is at end; pressing backspace should delete the last character
-        // without panicking and leave the placeholder intact.
-        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-
-        assert_eq!(composer.attached_images.len(), 1);
-        assert!(composer.textarea.text().starts_with("[Image #1]"));
-    }
-
-    #[test]
-    fn deleting_one_of_duplicate_image_placeholders_removes_one_entry() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-
-        let path1 = PathBuf::from("/tmp/image_dup1.png");
-        let path2 = PathBuf::from("/tmp/image_dup2.png");
-
-        composer.attach_image(path1);
-        // separate placeholders with a space for clarity
-        composer.handle_paste(" ".into());
-        composer.attach_image(path2.clone());
-
-        let placeholder1 = composer.attached_images[0].placeholder.clone();
-        let placeholder2 = composer.attached_images[1].placeholder.clone();
-        let text = composer.textarea.text().to_string();
-        let start1 = text.find(&placeholder1).expect("first placeholder present");
-        let end1 = start1 + placeholder1.len();
-        composer.textarea.set_cursor(end1);
-
-        // Backspace should delete the first placeholder and its mapping.
-        composer.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-
-        let new_text = composer.textarea.text().to_string();
-        assert_eq!(
-            1,
-            new_text.matches(&placeholder1).count(),
-            "one placeholder remains after deletion"
-        );
-        assert_eq!(
-            0,
-            new_text.matches(&placeholder2).count(),
-            "second placeholder was relabeled"
-        );
-        assert_eq!(
-            1,
-            new_text.matches("[Image #1]").count(),
-            "remaining placeholder relabeled to #1"
-        );
-        assert_eq!(
-            vec![AttachedImage {
-                path: path2,
-                placeholder: "[Image #1]".to_string()
-            }],
-            composer.attached_images,
-            "one image mapping remains"
-        );
-    }
-
-    #[test]
-    fn deleting_first_text_element_renumbers_following_text_element() {
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-
-        let path1 = PathBuf::from("/tmp/image_first.png");
-        let path2 = PathBuf::from("/tmp/image_second.png");
-
-        // Insert two adjacent atomic elements.
-        composer.attach_image(path1);
-        composer.attach_image(path2.clone());
-        assert_eq!(composer.textarea.text(), "[Image #1][Image #2]");
-        assert_eq!(composer.attached_images.len(), 2);
-
-        // Delete the first element using normal textarea editing (Delete at cursor start).
-        composer.textarea.set_cursor(0);
-        composer.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-
-        // Remaining image should be renumbered and the textarea element updated.
-        assert_eq!(composer.attached_images.len(), 1);
-        assert_eq!(composer.attached_images[0].path, path2);
-        assert_eq!(composer.attached_images[0].placeholder, "[Image #1]");
-        assert_eq!(composer.textarea.text(), "[Image #1]");
-    }
-
-    #[test]
-    fn pasting_filepath_attaches_image() {
-        let tmp = tempdir().expect("create TempDir");
-        let tmp_path: PathBuf = tmp.path().join("codex_tui_test_paste_image.png");
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-            ImageBuffer::from_fn(3, 2, |_x, _y| Rgba([1, 2, 3, 255]));
-        img.save(&tmp_path).expect("failed to write temp png");
-
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-
-        let needs_redraw = composer.handle_paste(tmp_path.to_string_lossy().to_string());
-        assert!(needs_redraw);
-        assert!(composer.textarea.text().starts_with("[Image #1] "));
-
-        let imgs = composer.take_recent_submission_images();
-        assert_eq!(imgs, vec![tmp_path]);
-    }
-
     /// Behavior: the first fast ASCII character is held briefly to avoid flicker; if no burst
     /// follows, it should eventually flush as normal typed input (not as a paste).
     #[test]
@@ -3254,7 +2707,7 @@ End of payload.";
     }
 
     #[test]
-    fn apply_external_edit_rebuilds_text_and_attachments() {
+    fn apply_external_edit_replaces_text_and_clears_pending_pastes() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -3265,51 +2718,16 @@ End of payload.";
             false,
         );
 
-        let placeholder = "[image 10x10]".to_string();
-        composer.textarea.insert_element(&placeholder);
-        composer.attached_images.push(AttachedImage {
-            placeholder: placeholder.clone(),
-            path: PathBuf::from("img.png"),
-        });
-        composer
-            .pending_pastes
-            .push(("[Pasted]".to_string(), "data".to_string()));
+        composer.handle_paste("x".repeat(LARGE_PASTE_CHAR_THRESHOLD + 1));
+        assert!(!composer.pending_pastes.is_empty());
+        assert!(!composer.large_paste_counters.is_empty());
 
-        composer.apply_external_edit(format!("Edited {placeholder} text"));
+        composer.apply_external_edit("Edited text".to_string());
 
-        assert_eq!(
-            composer.current_text(),
-            format!("Edited {placeholder} text")
-        );
+        assert_eq!(composer.current_text(), "Edited text".to_string());
         assert!(composer.pending_pastes.is_empty());
-        assert_eq!(composer.attached_images.len(), 1);
-        assert_eq!(composer.attached_images[0].placeholder, placeholder);
+        assert!(composer.large_paste_counters.is_empty());
         assert_eq!(composer.textarea.cursor(), composer.current_text().len());
-    }
-
-    #[test]
-    fn apply_external_edit_drops_missing_attachments() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-
-        let placeholder = "[image 10x10]".to_string();
-        composer.textarea.insert_element(&placeholder);
-        composer.attached_images.push(AttachedImage {
-            placeholder: placeholder.clone(),
-            path: PathBuf::from("img.png"),
-        });
-
-        composer.apply_external_edit("No images here".to_string());
-
-        assert_eq!(composer.current_text(), "No images here".to_string());
-        assert!(composer.attached_images.is_empty());
     }
 
     #[test]
@@ -3335,34 +2753,6 @@ End of payload.";
             "hello".to_string(),
             "placeholder should expand to actual text"
         );
-    }
-
-    #[test]
-    fn apply_external_edit_limits_duplicates_to_occurrences() {
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-
-        let placeholder = "[image 10x10]".to_string();
-        composer.textarea.insert_element(&placeholder);
-        composer.attached_images.push(AttachedImage {
-            placeholder: placeholder.clone(),
-            path: PathBuf::from("img.png"),
-        });
-
-        composer.apply_external_edit(format!("{placeholder} extra {placeholder}"));
-
-        assert_eq!(
-            composer.current_text(),
-            format!("{placeholder} extra {placeholder}")
-        );
-        assert_eq!(composer.attached_images.len(), 1);
     }
 
     #[test]
@@ -3475,43 +2865,5 @@ End of payload.";
         let _ = restored.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         assert!(restored.textarea.text().is_empty());
         assert!(restored.pending_pastes.is_empty());
-    }
-
-    #[test]
-    fn take_and_restore_draft_preserves_image_attachments() {
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyEvent;
-        use crossterm::event::KeyModifiers;
-
-        let (tx, _rx) = unbounded_channel::<AppEvent>();
-        let sender = AppEventSender::new(tx);
-        let mut composer = ChatComposer::new(
-            true,
-            sender,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-
-        let path = PathBuf::from("/tmp/image_draft.png");
-        composer.attach_image(path.clone());
-        composer.handle_paste(" hi".into());
-        let draft = composer.take_draft().expect("expected draft");
-
-        let (tx2, _rx2) = unbounded_channel::<AppEvent>();
-        let sender2 = AppEventSender::new(tx2);
-        let mut restored = ChatComposer::new(
-            true,
-            sender2,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-            false,
-        );
-        restored.restore_draft(draft);
-
-        let (result, _) =
-            restored.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(result, InputResult::Queued("[Image #1] hi".to_string()));
-        assert_eq!(restored.take_recent_submission_images(), vec![path]);
     }
 }

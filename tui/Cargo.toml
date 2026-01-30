@@ -21,7 +21,6 @@ crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
 derive_more = { workspace = true, features = ["is_variant"] }
 diffy = { workspace = true }
 dirs = { workspace = true }
-image = { workspace = true, features = ["jpeg", "png"] }
 itertools = { workspace = true }
 pathdiff = { workspace = true }
 pulldown-cmark = { workspace = true }
@@ -64,9 +63,6 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Console",
 ] }
 winsplit = "0.1"
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
-arboard = { workspace = true }
 
 
 [dev-dependencies]

@@ -8,7 +8,6 @@ mod app_event;
 mod app_event_sender;
 mod app_server_render;
 mod bottom_pane;
-mod clipboard_paste;
 mod codex_config;
 mod color;
 mod custom_terminal;

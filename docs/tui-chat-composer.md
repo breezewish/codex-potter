@@ -18,7 +18,7 @@ The chat composer is responsible for:
 
 High-level behavior when no popup is visible:
 
-- `Enter`: attempts submission. When there is text or attachments, the composer returns
+- `Enter`: attempts submission. When there is text, the composer returns
   `InputResult::Queued(text)` and clears the textarea.
   - `InputResult::Submitted` is currently not produced by any key binding in `codex-potter`
     (the variant remains for compatibility with the upstream Codex TUI).
@@ -26,7 +26,7 @@ High-level behavior when no popup is visible:
 
 When the file search popup is visible:
 
-- `Enter` / `Tab`: accept the current selection (insert path or attach image)
+- `Enter` / `Tab`: accept the current selection (insert path)
 - `Esc`: closes the popup without modifying text
 
 ## Key Routing
