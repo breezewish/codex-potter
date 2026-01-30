@@ -1,4 +1,6 @@
 use crate::key_hint::is_altgr;
+use codex_protocol::user_input::ByteRange;
+use codex_protocol::user_input::TextElement as UserTextElement;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -60,10 +62,36 @@ impl TextArea {
         }
     }
 
-    pub fn set_text(&mut self, text: &str) {
+    /// Replace the textarea text and clear any existing text elements.
+    pub fn set_text_clearing_elements(&mut self, text: &str) {
+        self.set_text_inner(text, None);
+    }
+
+    /// Replace the textarea text and set the provided text elements.
+    pub fn set_text_with_elements(&mut self, text: &str, elements: &[UserTextElement]) {
+        self.set_text_inner(text, Some(elements));
+    }
+
+    fn set_text_inner(&mut self, text: &str, elements: Option<&[UserTextElement]>) {
+        // Stage 1: replace the raw text and keep the cursor in a safe byte range.
         self.text = text.to_string();
         self.cursor_pos = self.cursor_pos.clamp(0, self.text.len());
+        // Stage 2: rebuild element ranges from scratch against the new text.
         self.elements.clear();
+        if let Some(elements) = elements {
+            for elem in elements {
+                let mut start = elem.byte_range.start.min(self.text.len());
+                let mut end = elem.byte_range.end.min(self.text.len());
+                start = self.clamp_pos_to_char_boundary(start);
+                end = self.clamp_pos_to_char_boundary(end);
+                if start >= end {
+                    continue;
+                }
+                self.elements.push(TextElement { range: start..end });
+            }
+            self.elements.sort_by_key(|e| e.range.start);
+        }
+        // Stage 3: clamp the cursor and reset derived state tied to the prior content.
         self.cursor_pos = self.clamp_pos_to_nearest_boundary(self.cursor_pos);
         self.wrap_cache.replace(None);
         self.preferred_col = None;
@@ -444,7 +472,10 @@ impl TextArea {
             } => {
                 self.move_cursor_to_end_of_line(true);
             }
-            _ => {}
+            _o => {
+                #[cfg(feature = "debug-logs")]
+                tracing::debug!("Unhandled key event in TextArea: {:?}", _o);
+            }
         }
     }
 
@@ -719,10 +750,20 @@ impl TextArea {
             .collect()
     }
 
-    pub fn element_payload_starting_at(&self, pos: usize) -> Option<String> {
-        let pos = pos.min(self.text.len());
-        let elem = self.elements.iter().find(|e| e.range.start == pos)?;
-        self.text.get(elem.range.clone()).map(str::to_string)
+    pub fn text_elements(&self) -> Vec<UserTextElement> {
+        self.elements
+            .iter()
+            .map(|e| {
+                let placeholder = self.text.get(e.range.clone()).map(str::to_string);
+                UserTextElement::new(
+                    ByteRange {
+                        start: e.range.start,
+                        end: e.range.end,
+                    },
+                    placeholder,
+                )
+            })
+            .collect()
     }
 
     /// Renames a single text element in-place, keeping it atomic.
@@ -972,7 +1013,7 @@ impl TextArea {
         }
     }
 
-    pub fn beginning_of_previous_word(&self) -> usize {
+    fn beginning_of_previous_word(&self) -> usize {
         let prefix = &self.text[..self.cursor_pos];
         let Some((first_non_ws_idx, ch)) = prefix
             .char_indices()
@@ -993,7 +1034,7 @@ impl TextArea {
         self.adjust_pos_out_of_elements(start, true)
     }
 
-    pub fn end_of_next_word(&self) -> usize {
+    fn end_of_next_word(&self) -> usize {
         let Some(first_non_ws) = self.text[self.cursor_pos..].find(|c: char| !c.is_whitespace())
         else {
             return self.text.len();
@@ -1105,6 +1146,22 @@ impl StatefulWidgetRef for &TextArea {
 }
 
 impl TextArea {
+    pub fn render_ref_masked(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        state: &mut TextAreaState,
+        mask_char: char,
+    ) {
+        let lines = self.wrapped_lines(area.width);
+        let scroll = self.effective_scroll(area.height, &lines, state.scroll);
+        state.scroll = scroll;
+
+        let start = scroll as usize;
+        let end = (scroll + area.height).min(lines.len() as u16) as usize;
+        self.render_lines_masked(area, buf, &lines, start..end, mask_char);
+    }
+
     fn render_lines(
         &self,
         area: Rect,
@@ -1134,6 +1191,26 @@ impl TextArea {
             }
         }
     }
+
+    fn render_lines_masked(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        lines: &[Range<usize>],
+        range: std::ops::Range<usize>,
+        mask_char: char,
+    ) {
+        for (row, idx) in range.enumerate() {
+            let r = &lines[idx];
+            let y = area.y + row as u16;
+            let line_range = r.start..r.end - 1;
+            let masked = self.text[line_range.clone()]
+                .chars()
+                .map(|_| mask_char)
+                .collect::<String>();
+            buf.set_string(area.x, y, &masked, Style::default());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1157,8 +1234,8 @@ mod tests {
                 choices[rng.random_range(0..choices.len())].to_string()
             }
             66..=75 => {
-                // Wide characters (Hiragana)
-                let choices = ["あ", "い", "う", "え", "お", "か", "き", "く", "け"];
+                // CJK wide characters
+                let choices = ["漢", "字", "測", "試", "你", "好", "界", "编", "码"];
                 choices[rng.random_range(0..choices.len())].to_string()
             }
             76..=85 => {
@@ -1236,10 +1313,10 @@ mod tests {
     #[test]
     fn insert_str_at_clamps_to_char_boundary() {
         let mut t = TextArea::new();
-        t.insert_str("あ");
+        t.insert_str("你");
         t.set_cursor(0);
         t.insert_str_at(1, "A");
-        assert_eq!(t.text(), "Aあ");
+        assert_eq!(t.text(), "A你");
         assert_eq!(t.cursor(), 1);
     }
 
@@ -1248,10 +1325,10 @@ mod tests {
         let mut t = TextArea::new();
         t.insert_str("abcd");
         t.set_cursor(1);
-        t.set_text("あ");
+        t.set_text_clearing_elements("你");
         assert_eq!(t.cursor(), 0);
         t.insert_str("a");
-        assert_eq!(t.text(), "aあ");
+        assert_eq!(t.text(), "a你");
     }
 
     #[test]
@@ -1278,6 +1355,21 @@ mod tests {
         t.set_cursor(t.text().len());
         t.delete_forward(1);
         assert_eq!(t.text(), "b");
+    }
+
+    #[test]
+    fn delete_forward_deletes_element_at_left_edge() {
+        let mut t = TextArea::new();
+        t.insert_str("a");
+        t.insert_element("<element>");
+        t.insert_str("b");
+
+        let elem_start = t.elements[0].range.start;
+        t.set_cursor(elem_start);
+        t.delete_forward(1);
+
+        assert_eq!(t.text(), "ab");
+        assert_eq!(t.cursor(), elem_start);
     }
 
     #[test]
@@ -1930,7 +2022,7 @@ mod tests {
             for _ in 0..base_len {
                 base.push_str(&rand_grapheme(&mut rng));
             }
-            ta.set_text(&base);
+            ta.set_text_clearing_elements(&base);
             // Choose a valid char boundary for initial cursor
             let mut boundaries: Vec<usize> = vec![0];
             boundaries.extend(ta.text().char_indices().map(|(i, _)| i).skip(1));

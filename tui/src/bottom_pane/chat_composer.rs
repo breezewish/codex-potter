@@ -318,7 +318,7 @@ impl ChatComposer {
         self.pending_pastes.clear();
         self.large_paste_counters.clear();
 
-        self.textarea.set_text(&text);
+        self.textarea.set_text_clearing_elements(&text);
         self.textarea.set_cursor(text.len());
         self.sync_popups();
     }
@@ -355,7 +355,7 @@ impl ChatComposer {
         self.large_paste_counters = draft.large_paste_counters;
 
         // Rebuild textarea so placeholder labels become elements again.
-        self.textarea.set_text("");
+        self.textarea.set_text_clearing_elements("");
         *self.textarea_state.borrow_mut() = TextAreaState::default();
         self.paste_burst = PasteBurst::default();
 
@@ -431,9 +431,9 @@ impl ChatComposer {
     /// Replace the entire composer content with `text` and reset cursor.
     pub fn set_text_content(&mut self, text: String) {
         // Clear any existing content and placeholders first.
-        self.textarea.set_text("");
+        self.textarea.set_text_clearing_elements("");
         self.pending_pastes.clear();
-        self.textarea.set_text(&text);
+        self.textarea.set_text_clearing_elements(&text);
         self.textarea.set_cursor(0);
         self.sync_popups();
     }
@@ -875,7 +875,7 @@ impl ChatComposer {
         new_text.push(' ');
         new_text.push_str(&text[end_idx..]);
 
-        self.textarea.set_text(&new_text);
+        self.textarea.set_text_clearing_elements(&new_text);
         let new_cursor = start_idx.saturating_add(inserted.len()).saturating_add(1);
         self.textarea.set_cursor(new_cursor);
     }
@@ -883,7 +883,7 @@ impl ChatComposer {
     /// Prepare text for submission/queuing. Returns None if submission should be suppressed.
     fn prepare_submission_text(&mut self) -> Option<String> {
         let mut text = self.textarea.text().to_string();
-        self.textarea.set_text("");
+        self.textarea.set_text_clearing_elements("");
 
         // Replace any placeholder pastes in the text before submission.
         if !self.pending_pastes.is_empty() {
@@ -930,6 +930,9 @@ impl ChatComposer {
         }
 
         let original_input = self.textarea.text().to_string();
+        let original_text_elements = self.textarea.text_elements();
+        let original_cursor = self.textarea.cursor();
+        let original_pending_pastes = self.pending_pastes.clone();
 
         if let Some(text) = self.prepare_submission_text() {
             if should_queue {
@@ -938,8 +941,11 @@ impl ChatComposer {
                 (InputResult::Submitted(text), true)
             }
         } else {
-            // Restore text if submission was suppressed
-            self.textarea.set_text(&original_input);
+            // Restore text if submission was suppressed.
+            self.textarea
+                .set_text_with_elements(&original_input, &original_text_elements);
+            self.textarea.set_cursor(original_cursor);
+            self.pending_pastes = original_pending_pastes;
             (InputResult::None, true)
         }
     }
@@ -2080,7 +2086,7 @@ End of payload.";
             false,
         );
 
-        composer.textarea.set_text("/help");
+        composer.textarea.set_text_clearing_elements("/help");
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
@@ -2498,7 +2504,7 @@ End of payload.";
                     composer.textarea.text().contains(&placeholder),
                     composer.pending_pastes.len(),
                 );
-                composer.textarea.set_text("");
+                composer.textarea.set_text_clearing_elements("");
                 result
             })
             .collect();

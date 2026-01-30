@@ -37,6 +37,16 @@ pub struct TextElement {
     pub placeholder: Option<String>,
 }
 
+impl TextElement {
+    /// Create a new text element with its byte range and an optional placeholder.
+    pub fn new(byte_range: ByteRange, placeholder: Option<String>) -> Self {
+        Self {
+            byte_range,
+            placeholder,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ByteRange {
     /// Start byte offset (inclusive) within the UTF-8 text buffer.
