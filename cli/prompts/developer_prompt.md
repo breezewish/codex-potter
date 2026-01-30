@@ -55,6 +55,7 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 - Follow engineering rules in `AGENTS.md` (if present).
 - No need to respond what workflow steps you have followed. Just do them.
 - You must not change progress file status from `open` to `skip`.
+- To avoid regression, read full progress file to learn what has been done.
 
 **Knowledge capture:** (`.codexpotter/kb/`)
 
