@@ -207,6 +207,7 @@ fn try_dump_windows_clipboard_image() -> Option<String> {
             .args(["-NoProfile", "-Command", script])
             .output()
         {
+            // Executing PowerShell command
             Ok(output) => {
                 if output.status.success() {
                     // Decode as UTF-8 (forced by the script above).
