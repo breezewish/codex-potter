@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: ${{ matrix.check.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - name: Rustfmt
+            command: cargo fmt --all -- --check
+          - name: Clippy
+            command: cargo clippy --workspace --all-targets --locked -- -D warnings
+          - name: Tests
+            command: cargo test --workspace --locked --profile ci-test
+          - name: Build
+            command: cargo build --workspace --all-targets --locked
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: ${{ matrix.check.command }}
+        run: ${{ matrix.check.command }}
