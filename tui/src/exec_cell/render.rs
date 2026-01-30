@@ -146,6 +146,35 @@ fn truncate_line_end_with_ellipsis(line: &Line<'_>, max_width: usize) -> Line<'s
     truncated
 }
 
+fn extend_line_with_command_preview(
+    line: &mut Line<'static>,
+    highlighted_lines: &[Line<'static>],
+    available_width: usize,
+) {
+    let Some((first, rest)) = highlighted_lines.split_first() else {
+        return;
+    };
+
+    let extra_lines = rest.len();
+    let suffix = if extra_lines > 0 {
+        Some(format!(" (... {extra_lines} lines)"))
+    } else {
+        None
+    };
+    let suffix_width = suffix.as_deref().map(UnicodeWidthStr::width).unwrap_or(0);
+    let command_width = available_width.saturating_sub(suffix_width);
+
+    let cmd_preview = if extra_lines > 0 {
+        take_line_prefix_by_width(first, command_width)
+    } else {
+        truncate_line_end_with_ellipsis(first, available_width)
+    };
+    line.extend(cmd_preview);
+    if let Some(suffix) = suffix {
+        line.push_span(suffix.dim());
+    }
+}
+
 #[derive(Clone)]
 pub struct OutputLines {
     pub lines: Vec<Line<'static>>,
@@ -468,27 +497,7 @@ impl ExecCell {
         let highlighted_lines = highlight_bash_to_lines(&cmd_display);
 
         let available_width = (width as usize).saturating_sub(header_prefix_width);
-        let Some((first, rest)) = highlighted_lines.split_first() else {
-            return vec![header_line];
-        };
-        let extra_lines = rest.len();
-        let suffix = if extra_lines > 0 {
-            Some(format!(" (... {extra_lines} lines)"))
-        } else {
-            None
-        };
-        let suffix_width = suffix.as_deref().map(UnicodeWidthStr::width).unwrap_or(0);
-        let command_width = available_width.saturating_sub(suffix_width);
-
-        let cmd_preview = if extra_lines > 0 {
-            take_line_prefix_by_width(first, command_width)
-        } else {
-            truncate_line_end_with_ellipsis(first, available_width)
-        };
-        header_line.extend(cmd_preview);
-        if let Some(suffix) = suffix {
-            header_line.push_span(suffix.dim());
-        }
+        extend_line_with_command_preview(&mut header_line, &highlighted_lines, available_width);
 
         let mut lines: Vec<Line<'static>> = vec![header_line];
 
@@ -582,27 +591,7 @@ impl ExecCell {
         let cmd_display = strip_bash_lc_and_escape(&first_call.command);
         let highlighted = highlight_bash_to_lines(&cmd_display);
         let available_width = (width as usize).saturating_sub(header_prefix_width);
-        let Some((first, rest)) = highlighted.split_first() else {
-            return vec![header_line];
-        };
-        let extra_lines = rest.len();
-        let suffix = if extra_lines > 0 {
-            Some(format!(" (... {extra_lines} lines)"))
-        } else {
-            None
-        };
-        let suffix_width = suffix.as_deref().map(UnicodeWidthStr::width).unwrap_or(0);
-        let command_width = available_width.saturating_sub(suffix_width);
-
-        let cmd_preview = if extra_lines > 0 {
-            take_line_prefix_by_width(first, command_width)
-        } else {
-            truncate_line_end_with_ellipsis(first, available_width)
-        };
-        header_line.extend(cmd_preview);
-        if let Some(suffix) = suffix {
-            header_line.push_span(suffix.dim());
-        }
+        extend_line_with_command_preview(&mut header_line, &highlighted, available_width);
 
         let indent = " ".repeat(header_prefix_width);
         let mut lines: Vec<Line<'static>> = vec![header_line];
@@ -610,29 +599,8 @@ impl ExecCell {
         for call in rest_calls {
             let cmd_display = strip_bash_lc_and_escape(&call.command);
             let highlighted = highlight_bash_to_lines(&cmd_display);
-            let Some((first, rest)) = highlighted.split_first() else {
-                continue;
-            };
-            let extra_lines = rest.len();
-            let suffix = if extra_lines > 0 {
-                Some(format!(" (... {extra_lines} lines)"))
-            } else {
-                None
-            };
-            let suffix_width = suffix.as_deref().map(UnicodeWidthStr::width).unwrap_or(0);
-            let command_width = available_width.saturating_sub(suffix_width);
-
-            let cmd_preview = if extra_lines > 0 {
-                take_line_prefix_by_width(first, command_width)
-            } else {
-                truncate_line_end_with_ellipsis(first, available_width)
-            };
-
             let mut line = Line::from(vec![Span::from(indent.clone())]);
-            line.extend(cmd_preview);
-            if let Some(suffix) = suffix {
-                line.push_span(suffix.dim());
-            }
+            extend_line_with_command_preview(&mut line, &highlighted, available_width);
             lines.push(line);
         }
 
