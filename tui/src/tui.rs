@@ -422,7 +422,8 @@ impl Tui {
 
             let terminal = &mut self.terminal;
             if let Some(new_area) = pending_viewport_area.take() {
-                apply_viewport_area_update(terminal, new_area)?;
+                terminal.set_viewport_area(new_area);
+                terminal.clear()?;
             }
 
             let size = terminal.size()?;
@@ -438,7 +439,8 @@ impl Tui {
                 area.y = size.height - area.height;
             }
             if area != terminal.viewport_area {
-                apply_viewport_area_update(terminal, area)?;
+                terminal.clear()?;
+                terminal.set_viewport_area(area);
             }
 
             if !self.pending_history_lines.is_empty() {
@@ -487,63 +489,5 @@ impl Tui {
             }
         }
         Ok(None)
-    }
-}
-
-fn apply_viewport_area_update<B>(
-    terminal: &mut crate::custom_terminal::Terminal<B>,
-    new_area: Rect,
-) -> Result<()>
-where
-    B: ratatui::prelude::Backend + std::io::Write,
-{
-    if new_area == terminal.viewport_area {
-        return Ok(());
-    }
-
-    // Clear the old viewport area before moving it. When resizing causes the viewport to move
-    // downward, clearing only after updating the viewport would leave stale UI lines above the
-    // new viewport position.
-    terminal.clear()?;
-    terminal.set_viewport_area(new_area);
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_backend::VT100Backend;
-
-    #[test]
-    fn apply_viewport_area_update_clears_old_viewport_when_moving_down() {
-        let backend = VT100Backend::new(10, 4);
-        let mut terminal =
-            crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
-
-        terminal.set_viewport_area(Rect::new(0, 0, 10, 2));
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                frame.buffer[(area.x, area.y)].set_symbol("X");
-            })
-            .expect("draw");
-
-        apply_viewport_area_update(&mut terminal, Rect::new(0, 1, 10, 2)).expect("update");
-
-        terminal
-            .draw(|frame| {
-                let area = frame.area();
-                frame.buffer[(area.x, area.y)].set_symbol("Y");
-            })
-            .expect("draw");
-
-        let contents = terminal.backend().vt100().screen().contents();
-        let lines = contents.lines().collect::<Vec<_>>();
-
-        assert!(
-            !lines.first().copied().unwrap_or_default().contains('X'),
-            "expected the first row to be cleared, got:\n{contents}",
-        );
-        assert_eq!(lines[1].chars().next().unwrap_or('?'), 'Y');
     }
 }
