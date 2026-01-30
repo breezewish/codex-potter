@@ -1,0 +1,5 @@
+---
+source: tui/src/status_indicator_widget.rs
+expression: terminal.backend()
+---
+"• Round 1/10 · Working (0s)                                                     "

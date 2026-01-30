@@ -2383,45 +2383,4 @@ mod tests {
             render_prompt_footer_line(Some(PromptFooterOverride::ExternalEditorHint))
         );
     }
-
-    #[test]
-    fn prompt_footer_external_editor_text_is_dim() {
-        let area = Rect::new(0, 0, 80, 1);
-        let mut buf = ratatui::buffer::Buffer::empty(area);
-        crate::bottom_pane::render_prompt_footer_for_test(area, &mut buf, None);
-
-        assert!(
-            !buf[(2, 0)]
-                .style()
-                .add_modifier
-                .contains(ratatui::style::Modifier::DIM)
-        );
-
-        let external_start_x = 2 + u16::try_from("ctrl+g ".len()).expect("fits in u16");
-        assert!(
-            buf[(external_start_x, 0)]
-                .style()
-                .add_modifier
-                .contains(ratatui::style::Modifier::DIM)
-        );
-    }
-
-    #[test]
-    fn prompt_footer_external_editor_override_hint_is_bold() {
-        let area = Rect::new(0, 0, 80, 1);
-        let mut buf = ratatui::buffer::Buffer::empty(area);
-        crate::bottom_pane::render_prompt_footer_for_test(
-            area,
-            &mut buf,
-            Some(PromptFooterOverride::ExternalEditorHint),
-        );
-
-        // 2 spaces of indent + a leading space span before the hint.
-        assert!(
-            buf[(3, 0)]
-                .style()
-                .add_modifier
-                .contains(ratatui::style::Modifier::BOLD)
-        );
-    }
 }

@@ -1415,46 +1415,14 @@ mod tests {
             false,
         );
 
-        let area = Rect::new(0, 0, 40, 6);
-        let mut buf = Buffer::empty(area);
-        composer.render(area, &mut buf);
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
 
-        let row_to_string = |y: u16| {
-            let mut row = String::new();
-            for x in 0..area.width {
-                row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
-            }
-            row
-        };
-
-        let mut hint_row: Option<(u16, String)> = None;
-        for y in 0..area.height {
-            let row = row_to_string(y);
-            if row.contains("context left") {
-                hint_row = Some((y, row));
-                break;
-            }
-        }
-
-        let (hint_row_idx, hint_row_contents) =
-            hint_row.expect("expected footer hint row to be rendered");
-        assert_eq!(
-            hint_row_idx,
-            area.height - 1,
-            "hint row should occupy the bottom line: {hint_row_contents:?}",
-        );
-
-        assert!(
-            hint_row_idx > 0,
-            "expected a spacing row above the footer hints",
-        );
-
-        let spacing_row = row_to_string(hint_row_idx - 1);
-        assert_eq!(
-            spacing_row.trim(),
-            "",
-            "expected blank spacing row above hints but saw: {spacing_row:?}",
-        );
+        let mut terminal = Terminal::new(TestBackend::new(40, 6)).expect("terminal");
+        terminal
+            .draw(|f| composer.render(f.area(), f.buffer_mut()))
+            .expect("draw");
+        insta::assert_snapshot!(terminal.backend());
     }
 
     fn snapshot_composer_state<F>(name: &str, enhanced_keys_supported: bool, setup: F)

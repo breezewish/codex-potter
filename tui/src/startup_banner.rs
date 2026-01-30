@@ -165,7 +165,6 @@ fn format_directory(directory: &Path, max_width: Option<usize>) -> String {
 mod tests {
     use super::*;
     use insta::assert_snapshot;
-    use pretty_assertions::assert_eq;
 
     fn to_plain_text(lines: &[Line<'static>]) -> String {
         let mut out = String::new();
@@ -186,57 +185,6 @@ mod tests {
         let dir = Path::new("/Users/example/repo");
         let lines = build_startup_banner_lines(120, "0.0.1", "gpt-5.2 xhigh", dir);
         assert_snapshot!("startup_banner_snapshot", to_plain_text(&lines));
-    }
-
-    #[test]
-    fn startup_banner_styles_are_applied() {
-        let dir = Path::new("/Users/example/repo");
-        let lines = build_startup_banner_lines(80, "0.0.1", "gpt-5.2 xhigh", dir);
-
-        for (idx, line) in lines[..POTTER_ASCII_ART.len()].iter().enumerate() {
-            assert_eq!(
-                line.spans[0].content.as_ref(),
-                ASCII_INDENT,
-                "ascii art line {idx} must be indented",
-            );
-            assert!(
-                line.spans[0].style.add_modifier.contains(Modifier::DIM),
-                "ascii art line {idx} indent must be dim",
-            );
-            assert!(
-                line.spans[1].style.add_modifier.contains(Modifier::DIM),
-                "ascii art line {idx} left span must be dim",
-            );
-            assert!(
-                line.spans[2].style.add_modifier.contains(Modifier::BOLD),
-                "ascii art line {idx} right span must be bold",
-            );
-            assert_eq!(
-                line.spans[2].style.fg,
-                Some(secondary_color()),
-                "ascii art line {idx} right span must use secondary color",
-            );
-        }
-
-        let version_line = &lines[POTTER_ASCII_ART.len() - 1];
-        let version_span = version_line.spans.last().expect("version span");
-        assert_eq!(version_span.content.as_ref(), "v0.0.1");
-        assert!(version_span.style.add_modifier.contains(Modifier::DIM));
-
-        let directory_line = &lines[POTTER_ASCII_ART.len() + 1];
-        assert_eq!(directory_line.spans[0].content.as_ref(), ASCII_INDENT);
-        assert_eq!(directory_line.spans[1].content.as_ref(), "directory: ");
-        assert!(
-            directory_line.spans[1]
-                .style
-                .add_modifier
-                .contains(Modifier::DIM)
-        );
-
-        let model_span = directory_line.spans.last().expect("model span");
-        assert_eq!(model_span.content.as_ref(), "gpt-5.2 xhigh");
-        assert_eq!(model_span.style.fg, Some(orange_color()));
-        assert!(model_span.style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]

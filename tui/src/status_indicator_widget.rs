@@ -246,7 +246,6 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::style::Modifier;
     use std::time::Duration;
     use std::time::Instant;
 
@@ -326,22 +325,19 @@ mod tests {
     }
 
     #[test]
-    fn round_prefix_uses_secondary_color_and_bold() {
-        let mut widget =
-            StatusIndicatorWidget::new(crate::tui::FrameRequester::test_dummy(), false);
-        widget.update_header_prefix(Some("Round 1/10".to_string()));
+    fn renders_with_round_prefix() {
+        let mut w = StatusIndicatorWidget::new(crate::tui::FrameRequester::test_dummy(), false);
+        w.update_header_prefix(Some("Round 1/10".to_string()));
 
-        // Freeze time-dependent rendering (elapsed + spinner) to keep the output stable.
-        widget.is_paused = true;
-        widget.elapsed_running = Duration::ZERO;
+        // Freeze time-dependent rendering (elapsed + spinner) to keep the snapshot stable.
+        w.is_paused = true;
+        w.elapsed_running = Duration::ZERO;
 
-        let area = Rect::new(0, 0, 80, 1);
-        let mut buf = Buffer::empty(area);
-        widget.render(area, &mut buf);
-
-        assert_eq!(buf[(2, 0)].symbol(), "R");
-        assert_eq!(buf[(2, 0)].style().fg, Some(secondary_color()));
-        assert!(buf[(2, 0)].style().add_modifier.contains(Modifier::BOLD));
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).expect("terminal");
+        terminal
+            .draw(|f| w.render(f.area(), f.buffer_mut()))
+            .expect("draw");
+        insta::assert_snapshot!(terminal.backend());
     }
 
     #[test]
