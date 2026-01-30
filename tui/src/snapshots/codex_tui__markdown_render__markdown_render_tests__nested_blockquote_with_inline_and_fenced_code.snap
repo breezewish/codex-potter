@@ -1,0 +1,10 @@
+---
+source: tui/src/markdown_render_tests.rs
+expression: rendered
+---
+> Nested quote with code:
+> 
+> > Inner quote and inline code
+> > 
+> > # fenced code inside a quote
+> > echo "hello from a quote"

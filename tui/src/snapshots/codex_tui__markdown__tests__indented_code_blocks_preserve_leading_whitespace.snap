@@ -1,0 +1,9 @@
+---
+source: tui/src/markdown.rs
+expression: lines
+---
+Before
+
+    code 1
+
+After

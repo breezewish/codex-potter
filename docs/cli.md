@@ -1,0 +1,78 @@
+# codex-potter CLI
+
+`codex-potter` is a TUI CLI that drives a **multi-round** Codex workflow using the **legacy**
+`codex-tui` formatting pipeline (Markdown, TODO lists, diffs, exec output blocks, shimmer,
+streaming, etc), powered by an external `codex app-server` process.
+
+Unlike `codex exec`, this tool does **not** run codex-core directly — it launches an external
+`codex app-server` process and renders the streamed events.
+
+## Workflow
+
+1. Validates that a `codex` binary is available (via PATH, unless `--codex-bin` is provided).
+2. Optionally recommends adding `.codexpotter/` to your global gitignore.
+3. Prompts once for your project goal, then creates:
+   - `.codexpotter/projects/YYYYMMDD_x/MAIN.md` (progress file)
+   - `.codexpotter/kb/` (knowledge base directory)
+4. Runs up to N turns (default 10). Each turn:
+   - starts a fresh `codex app-server`
+   - injects a fixed developer prompt pointing at the progress file
+   - submits a fixed prompt: `Continue working according to the agreed workflow and the progress tracking file.`
+5. Stops early if the agent outputs: `<codexpotter>All work is complete</codexpotter>`.
+
+## Usage
+
+```sh
+codex-potter [OPTIONS]
+```
+
+Options:
+
+- `--codex-bin <path>`: Path to the `codex` binary to launch in app-server mode.
+  - Also configurable via `CODEX_BIN` (defaults to `codex`).
+- `--rounds <n>`: Number of turns to run (default: 10; must be >= 1).
+- `--sandbox <mode>`: Sandbox mode to request from Codex per turn.
+  - One of: `default` (default), `workspace-write`, `read-only`, `danger-full-access`.
+  - `default` matches `codex`'s default behavior: no `--sandbox` flag is passed to the app-server
+    and the thread sandbox is left unspecified.
+- `--dangerously-bypass-approvals-and-sandbox`: Launch `codex app-server` in Codex's `--yolo` mode.
+  - Alias: `--yolo`.
+
+Examples:
+
+```sh
+codex-potter
+codex-potter --codex-bin ./target/debug/codex
+codex-potter --rounds 5
+codex-potter --sandbox workspace-write
+codex-potter --yolo
+```
+
+## Differences vs. `codex exec`
+
+- `codex-potter` uses an external `codex app-server` process, while `codex exec` runs codex-core
+  directly.
+- `codex-potter` renders rich TUI-formatted output (Markdown, diffs, exec blocks), while `codex exec`
+  emits primarily raw text.
+
+## Differences vs. `codex tui` (legacy)
+
+- `codex tui` is interactive (composer, queueing, model selection, session selection, etc).
+- `codex-potter` is multi-round: it prompts once, then runs a bounded number of turns and exits.
+
+## Notes / gotchas
+
+- `codex-potter` is a TUI app and requires a real TTY (it enters raw mode and listens for key events).
+  It is not designed for piping output into files.
+- Prompt shortcuts (initial composer):
+  - Up/Down to recall prompt history when the input is empty (stored in `~/.codexpotter/history.jsonl`, max 500 entries).
+  - ctrl+g to open an external editor (requires `$VISUAL` or `$EDITOR`), the same as codex.
+- Thinking / reasoning events are intentionally filtered and not rendered.
+- The global gitignore prompt can be disabled by setting
+  `notice.hide_gitignore_prompt = true` in `~/.config/codexpotter/config.toml` (or
+  `$XDG_CONFIG_HOME/codexpotter/config.toml` if `XDG_CONFIG_HOME` is set).
+- `--yolo` (`--dangerously-bypass-approvals-and-sandbox`) is unsafe: it disables Codex approvals and
+  sandboxing, and `codex-potter` will also request `sandbox: "danger-full-access"` for the thread.
+- The client requests `approvalPolicy: "never"` when starting the thread, and `codex-potter` is
+  non-interactive. If an app-server requests an approval anyway, the current implementation will
+  auto-accept to avoid hanging.

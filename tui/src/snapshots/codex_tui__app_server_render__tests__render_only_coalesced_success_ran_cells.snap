@@ -1,0 +1,6 @@
+---
+source: tui/src/app_server_render.rs
+expression: "lines_to_plain_strings(&lines).join(\"\\n\")"
+---
+• Ran git status --porcelain=v1
+      git --no-pager log -5 --oneline

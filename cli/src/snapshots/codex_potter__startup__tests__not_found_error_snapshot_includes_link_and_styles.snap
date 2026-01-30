@@ -1,0 +1,8 @@
+---
+source: cli/src/startup.rs
+expression: ansi_to_vt100_contents(&rendered)
+---
+Failed to find `codex` binary.
+codex-potter requires codex CLI installed locally.
+
+See https://developers.openai.com/codex/quickstart?setup=cli

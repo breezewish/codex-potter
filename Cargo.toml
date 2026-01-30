@@ -1,0 +1,129 @@
+[workspace]
+members = ["cli", "protocol", "tui"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+# Track the edition for all workspace crates in one place. Individual
+# crates can still override this value, but keeping it here means new
+# crates created with `cargo new -w ...` automatically inherit the 2024
+# edition.
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Internal
+codex-protocol = { path = "protocol" }
+codex-tui = { path = "tui" }
+
+# External
+ansi-to-tui = "7.0.0"
+anyhow = "1"
+chrono = "0.4.42"
+clap = "4"
+color-eyre = "0.6.3"
+crossterm = "0.28.1"
+derive_more = "2"
+diffy = "0.4.2"
+dirs = "6"
+icu_decimal = "2.1"
+icu_locale_core = "2.1"
+icu_provider = { version = "2.1", features = ["sync"] }
+ignore = "0.4.23"
+image = { version = "^0.25.9", default-features = false }
+insta = "1.46.0"
+itertools = "0.14.0"
+libc = "0.2.177"
+nucleo-matcher = "0.3.1"
+path-absolutize = "3.1.1"
+pathdiff = "0.2"
+pretty_assertions = "1.4.1"
+pulldown-cmark = "0.10"
+rand = "0.9"
+ratatui = "0.29.0"
+serde = "1"
+serde_json = "1"
+serial_test = "3.2.0"
+shlex = "1.3.0"
+strum_macros = "0.27.2"
+supports-color = "3.0.2"
+sys-locale = "0.3.2"
+tempfile = "3.23.0"
+textwrap = "0.16.2"
+thiserror = "2.0.17"
+tokio = "1"
+tokio-stream = "0.1.18"
+toml_edit = "0.24.0"
+tracing = "0.1.43"
+tree-sitter-bash = "0.25"
+tree-sitter-highlight = "0.25.10"
+unicode-segmentation = "1.12.0"
+unicode-width = "0.2"
+url = "2"
+uuid = "1"
+vt100 = "0.16.2"
+which = "8"
+
+[workspace.lints]
+rust = {}
+
+[workspace.lints.clippy]
+expect_used = "deny"
+identity_op = "deny"
+manual_clamp = "deny"
+manual_filter = "deny"
+manual_find = "deny"
+manual_flatten = "deny"
+manual_map = "deny"
+manual_memcpy = "deny"
+manual_non_exhaustive = "deny"
+manual_ok_or = "deny"
+manual_range_contains = "deny"
+manual_retain = "deny"
+manual_strip = "deny"
+manual_try_fold = "deny"
+manual_unwrap_or = "deny"
+needless_borrow = "deny"
+needless_borrowed_reference = "deny"
+needless_collect = "deny"
+needless_late_init = "deny"
+needless_option_as_deref = "deny"
+needless_question_mark = "deny"
+needless_update = "deny"
+redundant_clone = "deny"
+redundant_closure = "deny"
+redundant_closure_for_method_calls = "deny"
+redundant_static_lifetimes = "deny"
+trivially_copy_pass_by_ref = "deny"
+uninlined_format_args = "deny"
+unnecessary_filter_map = "deny"
+unnecessary_lazy_evaluations = "deny"
+unnecessary_sort_by = "deny"
+unnecessary_to_owned = "deny"
+unwrap_used = "deny"
+
+[workspace.metadata.cargo-shear]
+ignored = ["icu_provider"]
+
+[profile.release]
+lto = "fat"
+# Because we bundle some of these executables with the TypeScript CLI, we
+# remove everything to make the binary as small as possible.
+strip = "symbols"
+
+# See https://github.com/openai/codex/issues/1411 for details.
+codegen-units = 1
+
+[profile.ci-test]
+debug = 1         # Reduce debug symbol size
+inherits = "test"
+opt-level = 0
+
+[patch.crates-io]
+# Uncomment to debug local changes.
+# ratatui = { path = "../../ratatui" }
+crossterm = { git = "https://github.com/nornagon/crossterm", branch = "nornagon/color-query" }
+ratatui = { git = "https://github.com/nornagon/ratatui", branch = "nornagon-v0.29.0-patch" }
+
+# Uncomment to debug local changes.
+# rmcp = { path = "../../rust-sdk/crates/rmcp" }

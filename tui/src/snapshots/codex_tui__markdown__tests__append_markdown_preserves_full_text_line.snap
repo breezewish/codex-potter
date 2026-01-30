@@ -1,0 +1,5 @@
+---
+source: tui/src/markdown.rs
+expression: rendered
+---
+Hi! How can I help with codex-rs today? Want me to explore the repo, run tests, or work on a specific change?

@@ -1,0 +1,5 @@
+---
+source: cli/src/startup.rs
+expression: ansi_to_vt100_contents(&rendered)
+---
+Failed to find codex binary specified by `--codex-bin`: /nope/codex (does not exist).

@@ -1,0 +1,7 @@
+---
+source: tui/src/markdown_render.rs
+expression: "lines.join(\"\\n\") + \"\\n\""
+---
+> block quote with
+> content that should
+> wrap nicely

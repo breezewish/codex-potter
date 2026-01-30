@@ -1,0 +1,5 @@
+---
+source: tui/src/app_server_render.rs
+expression: render_prompt_footer_line(None)
+---
+  ctrl+g external editor

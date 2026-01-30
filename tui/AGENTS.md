@@ -1,0 +1,60 @@
+# codex-potter TUI
+
+## Overview
+
+This `tui/` crate is expected to match upstream Codex CLI TUI behavior and styles as closely as possible,
+so that users switching between codex and codex-potter have a consistent experience.
+
+Unless explicitly documented below, changes should preserve parity.
+
+### Text Box
+
+- No `/` command picker popup.
+- No `?` shortcuts overlay (treat `?` as a literal character).
+- `Tab` inserts a literal tab character (`\t`) into the composer.
+- No `$` skills picker.
+- No `Esc`-driven UX (no backtrack priming, no overlays/popups bound to `Esc`).
+- Bottom pane footer messages are customized.
+
+### Message Items
+
+- Reasoning messages are always hidden.
+- Multiple Ran items with successful execution status are collapsed into one item.
+- Additional CodexPotter items (e.g. project creation hints, round hints).
+
+### Shimmer
+
+- Round prefix is added to shimmer lines.
+- Remaining context is moved into the shimmer area.
+
+## TUI Style conventions
+
+See `styles.md`.
+
+## TUI code conventions
+
+- Use concise styling helpers from ratatui’s Stylize trait.
+  - Basic spans: use "text".into()
+  - Styled spans: use "text".red(), "text".green(), "text".magenta(), "text".dim(), etc.
+  - Prefer these over constructing styles with `Span::styled` and `Style` directly.
+  - Example: patch summary file lines
+    - Desired: vec!["  └ ".into(), "M".red(), " ".dim(), "tui/src/app.rs".dim()]
+
+### TUI Styling (ratatui)
+
+- Prefer Stylize helpers: use "text".dim(), .bold(), .cyan(), .italic(), .underlined() instead of manual Style where possible.
+- Prefer simple conversions: use "text".into() for spans and vec![…].into() for lines; when inference is ambiguous (e.g., Paragraph::new/Cell::from), use Line::from(spans) or Span::from(text).
+- Computed styles: if the Style is computed at runtime, using `Span::styled` is OK (`Span::from(text).set_style(style)` is also acceptable).
+- Avoid hardcoded white: do not use `.white()`; prefer the default foreground (no color).
+- Chaining: combine helpers by chaining for readability (e.g., url.cyan().underlined()).
+- Single items: prefer "text".into(); use Line::from(text) or Span::from(text) only when the target type isn’t obvious from context, or when using .into() would require extra type annotations.
+- Building lines: use vec![…].into() to construct a Line when the target type is obvious and no extra type annotations are needed; otherwise use Line::from(vec![…]).
+- Avoid churn: don’t refactor between equivalent forms (Span::styled ↔ set_style, Line::from ↔ .into()) without a clear readability or functional gain; follow file‑local conventions and do not introduce type annotations solely to satisfy .into().
+- Compactness: prefer the form that stays on one line after rustfmt; if only one of Line::from(vec![…]) or vec![…].into() avoids wrapping, choose that. If both wrap, pick the one with fewer wrapped lines.
+
+### Text wrapping
+
+- Always use textwrap::wrap to wrap plain strings.
+- If you have a ratatui Line and you want to wrap it, use the helpers in tui/src/wrapping.rs, e.g. word_wrap_lines / word_wrap_line.
+- If you need to indent wrapped lines, use the initial_indent / subsequent_indent options from RtOptions if you can, rather than writing custom logic.
+- If you have a list of lines and you need to prefix them all with some prefix (optionally different on the first vs subsequent lines), use the `prefix_lines` helper from line_utils.

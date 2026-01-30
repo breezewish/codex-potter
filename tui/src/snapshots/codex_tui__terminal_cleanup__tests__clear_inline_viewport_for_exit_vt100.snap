@@ -1,0 +1,8 @@
+---
+source: tui/src/terminal_cleanup.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+
+
+
+history

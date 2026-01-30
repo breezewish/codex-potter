@@ -1,0 +1,34 @@
+[package]
+name = "codex-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "codex_protocol"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+icu_decimal = { workspace = true }
+icu_locale_core = { workspace = true }
+icu_provider = { workspace = true, features = ["sync"] }
+path-absolutize = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+strum_macros = { workspace = true }
+sys-locale = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["v7"] }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+
+[package.metadata.cargo-shear]
+# Required because:
+# `icu_provider`: contains a required `sync` feature for `icu_decimal`
+ignored = ["icu_provider"]

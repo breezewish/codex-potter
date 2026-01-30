@@ -1,0 +1,76 @@
+[package]
+name = "codex-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "codex_tui"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ansi-to-tui = { workspace = true }
+anyhow = { workspace = true }
+codex-protocol = { workspace = true }
+color-eyre = { workspace = true }
+crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
+derive_more = { workspace = true, features = ["is_variant"] }
+diffy = { workspace = true }
+dirs = { workspace = true }
+image = { workspace = true, features = ["jpeg", "png"] }
+ignore = { workspace = true }
+itertools = { workspace = true }
+nucleo-matcher = { workspace = true }
+pathdiff = { workspace = true }
+pulldown-cmark = { workspace = true }
+ratatui = { workspace = true, features = [
+    "scrolling-regions",
+    "unstable-backend-writer",
+    "unstable-rendered-line-info",
+    "unstable-widget-ref",
+] }
+shlex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+supports-color = { workspace = true }
+tempfile = { workspace = true }
+textwrap = { workspace = true }
+thiserror = { workspace = true }
+toml_edit = { workspace = true }
+tokio = { workspace = true, features = [
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "test-util",
+    "time",
+] }
+tokio-stream = { workspace = true, features = ["sync"] }
+tracing = { workspace = true, features = ["log"] }
+tree-sitter-bash = { workspace = true }
+tree-sitter-highlight = { workspace = true }
+unicode-segmentation = { workspace = true }
+unicode-width = { workspace = true }
+url = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+which = { workspace = true }
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
+winsplit = "0.1"
+
+
+[dev-dependencies]
+chrono = { workspace = true }
+insta = { workspace = true }
+pretty_assertions = { workspace = true }
+rand = { workspace = true }
+serial_test = { workspace = true }
+vt100 = { workspace = true }

@@ -1,0 +1,36 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-potter-cli"
+version.workspace = true
+autobins = false
+
+[[bin]]
+name = "codex-potter"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+codex-protocol.workspace = true
+codex-tui.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+ignore.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = [
+    "io-util",
+    "macros",
+    "process",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+toml_edit.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+vt100.workspace = true

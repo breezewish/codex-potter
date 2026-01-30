@@ -1,0 +1,21 @@
+---
+source: tui/src/app_server_render.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+
+› test prompt
+
+
+• Explored
+  └ List ls
+    List .codexpotter
+    Read README.md, MAIN.md
+    Search KeyCode::Tab|\\bTab\\b in cli
+
+• Working (0s) · 100% context left
+
+
+
+› Assign new task to CodexPotter
+
+  ctrl+g external editor

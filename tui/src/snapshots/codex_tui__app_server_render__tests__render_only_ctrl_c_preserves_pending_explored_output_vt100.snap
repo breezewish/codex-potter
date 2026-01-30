@@ -1,0 +1,16 @@
+---
+source: tui/src/app_server_render.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+
+
+
+
+
+  ↳ Project created: .codexpotter/projects/20260129_18/MAIN.md
+
+• CodexPotter: iteration round 1/10
+
+• Explored
+  └ List ls -la
+    Search README.md in .codexpotter

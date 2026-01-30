@@ -1,0 +1,15 @@
+---
+source: tui/src/app_server_render.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+
+
+
+
+
+
+
+› Explain this: `1 + 1`.
+
+
+• Context compacted

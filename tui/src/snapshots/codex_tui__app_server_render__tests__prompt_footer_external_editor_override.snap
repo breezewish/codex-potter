@@ -1,0 +1,6 @@
+---
+source: tui/src/app_server_render.rs
+expression: "render_prompt_footer_line(InputMode::Vibe, Some(PromptFooterOverride::ExternalEditorHint))"
+---
+   Save and close external editor to continue.
+

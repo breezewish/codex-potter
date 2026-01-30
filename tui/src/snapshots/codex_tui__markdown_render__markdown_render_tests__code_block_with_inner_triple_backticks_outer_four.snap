@@ -1,0 +1,11 @@
+---
+source: tui/src/markdown_render_tests.rs
+expression: rendered
+---
+Here is a code block that shows another fenced block:
+
+```md
+# Inside fence
+- bullet
+- `inline code`
+```
