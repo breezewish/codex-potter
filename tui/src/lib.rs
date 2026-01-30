@@ -19,6 +19,7 @@ mod external_editor_integration;
 mod file_search;
 mod global_gitignore_prompt;
 mod history_cell;
+mod history_cell_potter;
 mod insert_history;
 mod key_hint;
 mod markdown;

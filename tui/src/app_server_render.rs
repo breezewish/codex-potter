@@ -476,14 +476,14 @@ impl RenderOnlyProcessor {
                     self.emit_user_prompt(message);
                 }
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                    history_cell::new_potter_project_hint(user_prompt_file),
+                    crate::history_cell_potter::new_potter_project_hint(user_prompt_file),
                 )));
             }
             EventMsg::PotterRoundStarted { current, total } => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                    history_cell::new_potter_round_started(current, total),
+                    crate::history_cell_potter::new_potter_round_started(current, total),
                 )));
             }
             EventMsg::TokenCount(ev) => {

@@ -226,27 +226,6 @@ pub fn new_web_search_call(query: String) -> PrefixedWrappedHistoryCell {
     PrefixedWrappedHistoryCell::new(text, "• ".dim(), "  ")
 }
 
-pub fn new_potter_round_started(current: u32, total: u32) -> PrefixedWrappedHistoryCell {
-    let text: Text<'static> = Line::from(vec![
-        Span::styled(
-            "CodexPotter: ",
-            Style::default()
-                .fg(secondary_color())
-                .add_modifier(Modifier::BOLD),
-        ),
-        format!("iteration round {current}/{total}").into(),
-    ])
-    .into();
-    PrefixedWrappedHistoryCell::new(text, "• ".dim(), "  ")
-}
-
-pub fn new_potter_project_hint(user_prompt_file: PathBuf) -> PrefixedWrappedHistoryCell {
-    let user_prompt_file = user_prompt_file.to_string_lossy().to_string();
-    let text: Text<'static> =
-        Line::from(vec!["Project created: ".dim(), user_prompt_file.into()]).into();
-    PrefixedWrappedHistoryCell::new(text, "  ↳ ".dim(), "    ")
-}
-
 #[allow(clippy::disallowed_methods)]
 pub fn new_warning_event(message: String) -> PrefixedWrappedHistoryCell {
     PrefixedWrappedHistoryCell::new(message.yellow(), "⚠ ".yellow(), "  ")
