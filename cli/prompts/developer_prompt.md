@@ -15,7 +15,7 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 
 3. Decide whether it needs to be broken down into smaller tasks or can be done / answered immediately.
    - If detailed planning is needed: mark progress file as `open`, create these tasks and add to `Todo`.
-   - Otherwise, if user request can be fulfilled immediately without creating any tasks: do so, mark progress file as `skip`. No need to create any tasks.
+   - Otherwise, if user request can be fulfilled immediately without creating any tasks: do so, mark progress file as `skip`, and add what you have done to `Done`. No need to create any tasks.
 
 **If status == open:**
 
