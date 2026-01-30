@@ -42,6 +42,7 @@ use ratatui::layout::Rect;
 use ratatui::layout::Size;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
+use ratatui::widgets::WidgetRef;
 
 #[derive(Debug, Hash)]
 pub struct Frame<'a> {
@@ -68,6 +69,16 @@ impl Frame<'_> {
     /// instead as this is the area of the buffer that is used to render the current frame.
     pub const fn area(&self) -> Rect {
         self.viewport_area
+    }
+
+    /// Render a [`WidgetRef`] to the current buffer using [`WidgetRef::render_ref`].
+    ///
+    /// Usually the area argument is the size of the current frame or a sub-area of the current
+    /// frame (which can be obtained using [`Layout`] to split the total area).
+    #[allow(dead_code)]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn render_widget_ref<W: WidgetRef>(&mut self, widget: W, area: Rect) {
+        widget.render_ref(area, self.buffer);
     }
 
     /// After drawing this frame, make the cursor visible and put it at the specified (x, y)
@@ -371,6 +382,20 @@ where
         Ok(())
     }
 
+    /// Clear terminal scrollback (if supported) and force a full redraw.
+    #[allow(dead_code)]
+    pub fn clear_scrollback(&mut self) -> io::Result<()> {
+        if self.viewport_area.is_empty() {
+            return Ok(());
+        }
+        self.backend
+            .set_cursor_position(self.viewport_area.as_position())?;
+        queue!(self.backend, Clear(crossterm::terminal::ClearType::Purge))?;
+        std::io::Write::flush(&mut self.backend)?;
+        self.previous_buffer_mut().reset();
+        Ok(())
+    }
+
     /// Clears the inactive buffer and swaps it with the current buffer
     pub fn swap_buffers(&mut self) {
         self.previous_buffer_mut().reset();
@@ -621,8 +646,8 @@ mod tests {
         let mut previous = Buffer::empty(area);
         let mut next = Buffer::empty(area);
 
-        previous.set_string(0, 0, "あい", Style::default());
-        next.set_string(0, 0, "あ", Style::default());
+        previous.set_string(0, 0, "中文", Style::default());
+        next.set_string(0, 0, "中", Style::default());
 
         let commands = diff_buffers(&previous, &next);
         assert!(

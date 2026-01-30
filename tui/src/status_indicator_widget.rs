@@ -19,6 +19,7 @@ use crate::exec_cell::spinner;
 use crate::key_hint;
 use crate::render::renderable::Renderable;
 use crate::shimmer::shimmer_spans;
+use crate::text_formatting::capitalize_first;
 use crate::token_format::format_tokens_compact;
 use crate::tui::FrameRequester;
 use crate::ui_colors::secondary_color;
@@ -99,7 +100,7 @@ impl StatusIndicatorWidget {
     pub fn update_details(&mut self, details: Option<String>) {
         self.details = details
             .filter(|details| !details.is_empty())
-            .map(|details| details.trim_start().to_string());
+            .map(|details| capitalize_first(details.trim_start()));
     }
 
     #[cfg(test)]

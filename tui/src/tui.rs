@@ -446,8 +446,9 @@ impl Tui {
             if !self.pending_history_lines.is_empty() {
                 crate::insert_history::insert_history_lines(
                     terminal,
-                    std::mem::take(&mut self.pending_history_lines),
+                    self.pending_history_lines.clone(),
                 )?;
+                self.pending_history_lines.clear();
             }
 
             // Update the y position for suspending so Ctrl-Z can place the cursor correctly.

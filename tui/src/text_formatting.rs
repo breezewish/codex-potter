@@ -1,10 +1,22 @@
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
+pub fn capitalize_first(input: &str) -> String {
+    let mut chars = input.chars();
+    match chars.next() {
+        Some(first) => {
+            let mut capitalized = first.to_uppercase().collect::<String>();
+            capitalized.push_str(chars.as_str());
+            capitalized
+        }
+        None => String::new(),
+    }
+}
+
 /// Truncate a path-like string to the given display width, keeping leading and trailing segments
 /// where possible and inserting a single Unicode ellipsis between them. If an individual segment
 /// cannot fit, it is front-truncated with an ellipsis.
-pub(crate) fn center_truncate_path(path: &str, max_width: usize) -> String {
+pub fn center_truncate_path(path: &str, max_width: usize) -> String {
     if max_width == 0 {
         return String::new();
     }
