@@ -16,7 +16,6 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 3. Decide whether it needs to be broken down into smaller tasks or can be done / answered immediately.
    - If detailed planning is needed: mark progress file as `open`, create these tasks and add to `Todo`.
    - If user request can be completed immediately: do so, mark progress file as `skip`. No need to create any tasks.
-     - Additionally update progress file's `potterflag` to true if you have not changed any code since you received this workflow instruction.
 
 **If status == open:**
 
@@ -48,7 +47,6 @@ Run the workflow below to make steady progress toward the overall goal recorded 
      - Coding kind: polish, simplification/completion, quality, performance, edge cases, error handling, UX, docs, etc.
      - Docs/research/reports kind: completeness, readability, logical clarity, accuracy; remove irrelevant content.
    - Stop if you are very certain everything is done and no further improvements are possible.
-     - Additionally update progress file's `potterflag` to true if you have not changed any code since you received this workflow instruction.
 
    Important: if the user request was fulfilled by replying directly without any artifact files or code changes, you can stop once all tasks are done — no further improvements are needed.
 
@@ -67,5 +65,10 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 - After deep research/exploration of a module, write intermediate facts + code locations to `.codexpotter/kb/xxx.md` and update the README index.
 - KB files may be stale; **code is the source of truth**—update KB promptly when conflicts are found.
 - No need to commit KB files.
+
+**Before you provide the final response when all tasks are done or the project is skipped:**
+
+- Mark progress file's `potterflag` to true if you have not changed any file since you received this workflow instruction.
+  (updating files under `.codexpotter/` does not count as "changing any file")
 
 </WORKFLOW_INSTRUCTIONS>
