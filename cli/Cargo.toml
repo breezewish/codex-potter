@@ -33,4 +33,5 @@ which.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+pretty_assertions = { workspace = true }
 vt100.workspace = true

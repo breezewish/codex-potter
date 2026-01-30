@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 
 use anyhow::Context;
 use chrono::DateTime;
@@ -26,6 +27,8 @@ pub fn init_project(
     user_prompt: &str,
     now: DateTime<Local>,
 ) -> anyhow::Result<ProjectInit> {
+    let (git_commit, git_branch) = resolve_git_metadata(workdir);
+
     let codexpotter_dir = workdir.join(".codexpotter");
     let projects_root = codexpotter_dir.join("projects");
     let kb_dir = codexpotter_dir.join("kb");
@@ -38,15 +41,21 @@ pub fn init_project(
     let (project_dir, progress_file_rel) = create_next_project_dir(&projects_root, &date)?;
 
     let main_md = project_dir.join("MAIN.md");
-    let main_md_contents = render_project_main(user_prompt);
+    let main_md_contents = render_project_main(user_prompt, &git_commit, &git_branch);
     std::fs::write(&main_md, main_md_contents)
         .with_context(|| format!("write {}", main_md.display()))?;
 
     Ok(ProjectInit { progress_file_rel })
 }
 
-pub fn render_project_main(user_prompt: &str) -> String {
-    PROJECT_MAIN_TEMPLATE.replace("{{USER_PROMPT}}", user_prompt)
+pub fn render_project_main(user_prompt: &str, git_commit: &str, git_branch: &str) -> String {
+    let git_commit = yaml_escape_double_quoted(git_commit);
+    let git_branch = yaml_escape_double_quoted(git_branch);
+
+    PROJECT_MAIN_TEMPLATE
+        .replace("{{USER_PROMPT}}", user_prompt)
+        .replace("{{GIT_COMMIT}}", &git_commit)
+        .replace("{{GIT_BRANCH}}", &git_branch)
 }
 
 pub fn render_developer_prompt(progress_file_rel: &Path) -> String {
@@ -120,10 +129,43 @@ fn front_matter_bool(contents: &str, key: &str) -> Option<bool> {
     None
 }
 
+fn resolve_git_metadata(workdir: &Path) -> (String, String) {
+    let git_commit = git_stdout_trimmed(workdir, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let git_branch =
+        git_stdout_trimmed(workdir, &["symbolic-ref", "-q", "--short", "HEAD"]).unwrap_or_default();
+
+    (git_commit, git_branch)
+}
+
+fn git_stdout_trimmed(workdir: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workdir)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return None;
+    }
+
+    Some(stdout)
+}
+
+fn yaml_escape_double_quoted(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use pretty_assertions::assert_eq;
+    use std::process::Command;
 
     #[test]
     fn init_project_creates_main_md_and_increments_suffix() {
@@ -148,6 +190,8 @@ mod tests {
         let main = std::fs::read_to_string(&first_main).expect("read main");
         assert!(main.contains("# Overall Goal"));
         assert!(main.contains("do something"));
+        assert!(main.contains("git_commit: \"\""));
+        assert!(main.contains("git_branch: \"\""));
 
         let second = init_project(temp.path(), "do something else", now).expect("init project");
         assert_eq!(
@@ -160,6 +204,104 @@ mod tests {
 
         let developer = render_developer_prompt(&second.progress_file_rel);
         assert!(developer.contains(".codexpotter/projects/20260127_2/MAIN.md"));
+    }
+
+    #[test]
+    fn init_project_writes_git_commit_and_branch_when_in_repo() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let workdir = temp.path();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(workdir)
+                .args(["init", "-q"])
+                .status()
+                .expect("git init")
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(workdir)
+                .args(["config", "user.name", "test"])
+                .status()
+                .expect("git config user.name")
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(workdir)
+                .args(["config", "user.email", "test@example.com"])
+                .status()
+                .expect("git config user.email")
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(workdir)
+                .args(["checkout", "-q", "-b", "test-branch"])
+                .status()
+                .expect("git checkout -b")
+                .success()
+        );
+
+        std::fs::write(workdir.join("README.md"), "hello\n").expect("write file");
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(workdir)
+                .args(["add", "."])
+                .status()
+                .expect("git add")
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(workdir)
+                .args(["commit", "-q", "-m", "init"])
+                .status()
+                .expect("git commit")
+                .success()
+        );
+
+        let git_commit = git_stdout_trimmed(workdir, &["rev-parse", "HEAD"]).expect("rev-parse");
+        let git_branch = git_stdout_trimmed(workdir, &["symbolic-ref", "-q", "--short", "HEAD"])
+            .expect("branch");
+        assert_eq!(git_branch, "test-branch");
+
+        let now = Local
+            .with_ymd_and_hms(2026, 1, 27, 12, 0, 0)
+            .single()
+            .expect("timestamp");
+        let init = init_project(workdir, "do something", now).expect("init project");
+
+        let main = std::fs::read_to_string(workdir.join(&init.progress_file_rel)).expect("read");
+        assert!(main.contains(&format!("git_commit: \"{git_commit}\"")));
+        assert!(main.contains("git_branch: \"test-branch\""));
+
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(workdir)
+                .args(["checkout", "-q", "--detach"])
+                .status()
+                .expect("git checkout --detach")
+                .success()
+        );
+
+        let detached = init_project(workdir, "do something else", now).expect("init detached");
+        let main =
+            std::fs::read_to_string(workdir.join(&detached.progress_file_rel)).expect("read");
+        assert!(main.contains(&format!("git_commit: \"{git_commit}\"")));
+        assert!(main.contains("git_branch: \"\""));
     }
 
     #[test]

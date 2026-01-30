@@ -42,6 +42,12 @@ The workflow template defines:
 - `short_title`: short human-readable title for the session
   - Set during the first round (when `status: initial`).
   - **Not currently parsed by the runner**.
+- `git_commit`: git commit SHA captured when the session is created
+  - Empty when the working directory is not a git repo (or HEAD cannot be resolved).
+  - **Not currently parsed by the runner**.
+- `git_branch`: git branch name captured when the session is created
+  - Empty when not on a branch (detached HEAD) or when the working directory is not a git repo.
+  - **Not currently parsed by the runner**.
 - `potterflag`: `true` | `false`
   - **The only field currently read by the runner.**
   - When `true`, the CLI stops running additional rounds for the current session

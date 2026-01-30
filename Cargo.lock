@@ -277,6 +277,7 @@ dependencies = [
  "dirs",
  "ignore",
  "insta",
+ "pretty_assertions",
  "serde",
  "serde_json",
  "tempfile",
