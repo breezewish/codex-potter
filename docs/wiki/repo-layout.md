@@ -4,9 +4,9 @@ This repo is a Rust workspace that builds `codex-potter`, a multi-round runner t
 external `codex app-server` process and renders its streamed events using a legacy Codex TUI
 formatting pipeline.
 
-The codebase is heavily derived from the upstream Codex repository (`~/Work/ai-agent/codex`,
-especially `codex-rs/`). When making changes, be explicit about whether a piece of code is
-"upstream-derived" or "potter-specific" (see "Ownership & upstream mapping" below).
+The codebase is heavily derived from the upstream Codex Rust workspace (`codex-rs/`). When making
+changes, be explicit about whether a piece of code is "upstream-derived" or "potter-specific" (see
+"Ownership & upstream mapping" below).
 
 ## Workspace crates
 
@@ -47,8 +47,8 @@ Key modules (high-level):
 - `cli/src/main.rs`: top-level loop.
   - Creates `codex_tui::CodexPotterTui`.
   - Prompts the user for an initial goal.
-  - Initializes a project under `.codexpotter/projects/YYYYMMDD_N/MAIN.md` and ensures
-    `.codexpotter/kb/` exists.
+  - Initializes a project under `.codexpotter/projects/YYYYMMDD_N/MAIN.md` and ensures a
+    gitignored knowledge base directory exists for intermediate notes.
   - Runs up to `--rounds N`; each round starts a fresh `codex app-server` and renders a single
     "turn".
 - `cli/src/project.rs`: progress file creation and fixed per-turn prompt (`prompts/prompt.md`).
@@ -153,3 +153,5 @@ When changing code, treat these as "ownership signals":
 Practical rule of thumb: keep "potter logic" (multi-round orchestration, progress file conventions,
 task queueing across rounds) out of upstream-derived TUI modules when possible; prefer small
 wrappers (like `CodexPotterTui`) and explicit potter-only event types.
+
+See also: `docs/wiki/upstream-parity.md`.

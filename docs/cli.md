@@ -23,7 +23,7 @@ see `docs/wiki/core-architecture.md` for the end-to-end flow.
 2. Optionally recommends adding `.codexpotter/` to your global gitignore.
 3. Prompts once for your project goal, then creates:
    - `.codexpotter/projects/YYYYMMDD_x/MAIN.md` (progress file)
-   - `.codexpotter/kb/` (knowledge base directory)
+   - a gitignored knowledge base directory (scratchpad for intermediate findings)
 4. Runs up to N rounds (default 10). Each round:
    - starts a fresh `codex app-server` (one app-server thread + one `turn/start`)
    - injects a fixed developer prompt pointing at the progress file

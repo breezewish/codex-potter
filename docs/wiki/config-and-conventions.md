@@ -17,8 +17,8 @@ Created by `cli/src/project.rs`:
 - `.codexpotter/projects/YYYYMMDD_N/MAIN.md`
   - the progress file that the agent is instructed to read/update each round
   - the file contains front matter fields (`status`, `potterflag`, `short_title`) plus task lists
-- `.codexpotter/kb/`
-  - a scratchpad for intermediate findings ("knowledge base"); intentionally gitignored
+- a gitignored knowledge base directory
+  - a scratchpad for intermediate findings; intentionally not committed
 
 ### Per-user (under the home directory)
 
@@ -109,4 +109,3 @@ Workflow:
 If you don't have the tool:
 
 - `cargo install cargo-insta`
-

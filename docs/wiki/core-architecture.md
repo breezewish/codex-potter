@@ -85,7 +85,7 @@ Key modules:
 
 1. Per-project state under the *workdir* (the directory where `codex-potter` is launched):
    - `.codexpotter/projects/YYYYMMDD_N/MAIN.md` (progress file)
-   - `.codexpotter/kb/` (knowledge base; scratchpad for intermediate findings)
+   - a gitignored knowledge base directory (scratchpad for intermediate findings)
 2. Per-user state under the user's home directory:
    - `~/.config/codexpotter/config.toml` (or `$XDG_CONFIG_HOME/codexpotter/config.toml`)
    - `~/.codexpotter/history.jsonl` (prompt history for the composer)
@@ -121,7 +121,7 @@ Durable memory is the progress file and the repository state on disk.
 For each session goal:
 
 1. Create `.codexpotter/projects/YYYYMMDD_N/MAIN.md` from `cli/prompts/project_main.md`.
-2. Ensure `.codexpotter/kb/` exists.
+2. Ensure the gitignored knowledge base directory exists.
 3. Render a developer prompt that points to the progress file (`cli/prompts/developer_prompt.md`).
 
 ### 3) One round (one turn in a fresh app-server)

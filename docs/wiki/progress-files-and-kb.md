@@ -59,7 +59,7 @@ The workflow template defines:
   - commit code changes after completing tasks (but never commit `.codexpotter/`)
   - avoid referencing file line numbers in docs
 
-## Knowledge base (`.codexpotter/kb/`)
+## Knowledge base (gitignored scratch directory)
 
 ### Purpose
 
@@ -75,7 +75,6 @@ knowledge that should be committed.
 
 ### Conventions
 
-- Keep an index at `.codexpotter/kb/README.md` with one-line summaries for each KB note.
+- Keep a lightweight index (one-line summaries) for each KB note so it stays navigable.
 - Treat KB notes as potentially stale: **the code is the source of truth**.
 - Never commit anything under `.codexpotter/` (it is gitignored by design).
-
