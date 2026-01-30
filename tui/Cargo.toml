@@ -71,4 +71,5 @@ insta = { workspace = true }
 pretty_assertions = { workspace = true }
 rand = { workspace = true }
 serial_test = { workspace = true }
+tokio-util = { workspace = true, features = ["time"] }
 vt100 = { workspace = true }
