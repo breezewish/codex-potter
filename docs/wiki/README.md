@@ -6,12 +6,13 @@ Recommended reading order (new contributors):
    potter-specific code).
 2. `core-architecture.md` - End-to-end architecture: multi-round runner, app-server bridge, render
    pipeline, and `.codexpotter/` artifacts.
-3. `config-and-conventions.md` - Where state lives, how model config is resolved, sandbox/approval
+3. `progress-files-and-kb.md` - Progress file structure/semantics and KB usage conventions.
+4. `config-and-conventions.md` - Where state lives, how model config is resolved, sandbox/approval
    behavior, and how to run tests/snapshots.
-4. `../cli.md` - `codex-potter` CLI behavior and multi-round control flow.
-5. `tui-design.md` - Render-only TUI behavior: bottom pane, output folding, token usage indicator,
+5. `../cli.md` - `codex-potter` CLI behavior and multi-round control flow.
+6. `tui-design.md` - Render-only TUI behavior: bottom pane, output folding, token usage indicator,
    and status header updates.
-6. `../tui-chat-composer.md` - Bottom-pane input state machine notes (`ChatComposer`).
+7. `../tui-chat-composer.md` - Bottom-pane input state machine notes (`ChatComposer`).
 
 ## Documentation conventions
 
