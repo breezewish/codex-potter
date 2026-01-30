@@ -28,6 +28,7 @@ Unless explicitly documented below, changes should preserve parity.
 
 - Round prefix is added to shimmer lines.
 - Remaining context is moved into the shimmer area.
+- No `esc to interrupt` message, since we interrupt using `Ctrl-C`.
 
 ### Other differences
 

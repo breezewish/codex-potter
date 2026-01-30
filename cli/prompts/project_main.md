@@ -1,6 +1,7 @@
 ---
 status: initial
 potterflag: false
+short_title: ""
 ---
 
 # Overall Goal

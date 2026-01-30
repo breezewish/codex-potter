@@ -11,7 +11,9 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 
 1. Resolve user's request in `Overall Goal`.
 
-2. Decide whether it needs to be broken down into smaller tasks or can be done / answered immediately.
+2. Summarize it into a short title (max 10 words) using the same language as user's request and set it to progress file's `short_title` in front matter.
+
+3. Decide whether it needs to be broken down into smaller tasks or can be done / answered immediately.
    - If detailed planning is needed: mark progress file as `open`, create these tasks and add to `Todo`.
    - If user request can be completed immediately: do so, mark progress file as `skip`. No need to create any tasks.
      - Additionally update progress file's `potterflag` to true if you have not changed any code since you received this workflow instruction.
