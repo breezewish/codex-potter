@@ -1,5 +1,0 @@
----
-source: tui/src/markdown_render.rs
-expression: "lines.join(\"\\n\") + \"\\n\""
----
-fn main() { println!("hi from a long line"); }

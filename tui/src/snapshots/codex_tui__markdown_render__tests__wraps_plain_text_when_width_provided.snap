@@ -1,7 +1,0 @@
----
-source: tui/src/markdown_render.rs
-expression: "lines.join(\"\\n\") + \"\\n\""
----
-This is a simple
-sentence that
-should wrap.
