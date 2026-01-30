@@ -18,7 +18,6 @@ mod exec_command;
 mod external_editor;
 mod external_editor_integration;
 mod file_search;
-mod file_search_engine;
 mod global_gitignore_prompt;
 mod history_cell;
 mod insert_history;

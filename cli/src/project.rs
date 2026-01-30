@@ -128,6 +128,6 @@ mod tests {
         assert!(DEVELOPER_PROMPT_TEMPLATE.contains("{{DONE_MARKER}}"));
         assert!(!DEVELOPER_PROMPT_TEMPLATE.contains(crate::DONE_MARKER));
 
-        assert!(fixed_prompt().contains("Continue working according to the agreed workflow"));
+        assert!(fixed_prompt().contains("Continue working according to the WORKFLOW_INSTRUCTIONS"));
     }
 }

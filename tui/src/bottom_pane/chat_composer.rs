@@ -112,6 +112,7 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
+use codex_file_search::FileMatch;
 use codex_protocol::models::local_image_label_text;
 
 use crate::app_event::AppEvent;
@@ -120,7 +121,6 @@ use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use crate::clipboard_paste::normalize_pasted_path;
 use crate::clipboard_paste::pasted_image_format;
-use crate::file_search_engine::FileMatch;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -657,9 +657,40 @@ impl ChatComposer {
             return (InputResult::None, false);
         }
 
-        let result = match &mut self.active_popup {
-            ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
-            ActivePopup::None => self.handle_key_event_without_popup(key_event),
+        let result = match key_event {
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            } if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                && c.eq_ignore_ascii_case(&'v') =>
+            {
+                match crate::clipboard_paste::paste_image_to_temp_png() {
+                    Ok((path, info)) => {
+                        tracing::debug!(
+                            "pasted image size={}x{} format={}",
+                            info.width,
+                            info.height,
+                            info.encoded_format.label()
+                        );
+                        self.attach_image(path);
+                    }
+                    Err(err) => {
+                        tracing::warn!("failed to paste image: {err}");
+                        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            crate::history_cell::new_error_event(format!(
+                                "Failed to paste image: {err}",
+                            )),
+                        )));
+                    }
+                }
+                (InputResult::None, true)
+            }
+            other => match &mut self.active_popup {
+                ActivePopup::File(_) => self.handle_key_event_with_file_popup(other),
+                ActivePopup::None => self.handle_key_event_without_popup(other),
+            },
         };
 
         // Update (or hide/show) popup after processing the key.

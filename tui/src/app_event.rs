@@ -3,8 +3,8 @@
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::Op;
 
-use crate::file_search_engine::FileMatch;
 use crate::history_cell::HistoryCell;
+use codex_file_search::FileMatch;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]

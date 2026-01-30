@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 ansi-to-tui = { workspace = true }
 anyhow = { workspace = true }
+codex-file-search = { workspace = true }
 codex-protocol = { workspace = true }
 color-eyre = { workspace = true }
 crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
@@ -21,9 +22,7 @@ derive_more = { workspace = true, features = ["is_variant"] }
 diffy = { workspace = true }
 dirs = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png"] }
-ignore = { workspace = true }
 itertools = { workspace = true }
-nucleo-matcher = { workspace = true }
 pathdiff = { workspace = true }
 pulldown-cmark = { workspace = true }
 ratatui = { workspace = true, features = [
@@ -65,6 +64,9 @@ windows-sys = { version = "0.52", features = [
     "Win32_System_Console",
 ] }
 winsplit = "0.1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = { workspace = true }
 
 
 [dev-dependencies]

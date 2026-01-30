@@ -1,5 +1,5 @@
 [workspace]
-members = ["cli", "protocol", "tui"]
+members = ["cli", "protocol", "tui", "file-search"]
 resolver = "2"
 
 [workspace.package]
@@ -13,15 +13,18 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # Internal
+codex-file-search = { path = "file-search" }
 codex-protocol = { path = "protocol" }
 codex-tui = { path = "tui" }
 
 # External
 ansi-to-tui = "7.0.0"
 anyhow = "1"
+arboard = { version = "3", features = ["wayland-data-control"] }
 chrono = "0.4.42"
 clap = "4"
 color-eyre = "0.6.3"
+crossbeam-channel = "0.5.15"
 crossterm = "0.28.1"
 derive_more = "2"
 diffy = "0.4.2"
@@ -34,7 +37,7 @@ image = { version = "^0.25.9", default-features = false }
 insta = "1.46.0"
 itertools = "0.14.0"
 libc = "0.2.177"
-nucleo-matcher = "0.3.1"
+nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee" }
 path-absolutize = "3.1.1"
 pathdiff = "0.2"
 pretty_assertions = "1.4.1"
