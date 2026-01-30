@@ -38,9 +38,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: |
+          channel="$(awk -F'\"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          if [[ -z "$channel" ]]; then
+            echo "Failed to read Rust toolchain channel from rust-toolchain.toml." >&2
+            cat rust-toolchain.toml >&2
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: clippy, rustfmt
 
       - name: Rust cache
