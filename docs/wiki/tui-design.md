@@ -13,7 +13,7 @@ Scope:
 
 Non-goals:
 
-- end-user usage guide (see `docs/cli.md`)
+- end-user usage guide (see `cli.md`)
 - unrelated upstream Codex TUI screens (approvals UI, slash commands, etc.) that are not present in
   this repo
 
@@ -51,7 +51,7 @@ Code:
 
 The composer owns text editing, paste-burst handling, history navigation, and popup routing.
 
-Deep dive: `docs/tui-chat-composer.md`.
+Deep dive: `tui-chat-composer.md`.
 
 ### Queued prompts (turn is running)
 

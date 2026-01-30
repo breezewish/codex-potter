@@ -4,9 +4,9 @@ This document describes the behavior of the `ChatComposer` bottom-pane input sta
 (`tui/src/bottom_pane/chat_composer.rs`) as used by `codex-potter`.
 
 For the broader render-only TUI design (output folding, token indicator, status header updates),
-see `docs/wiki/tui-design.md`. For the wiki index, see `docs/wiki/README.md`.
+see `tui-design.md`. For the wiki index, see `README.md`.
 
-For `@` file search (session orchestration + popup insertion), see `docs/wiki/file-search.md`.
+For `@` file search (session orchestration + popup insertion), see `file-search.md`.
 
 ## Ownership
 

@@ -7,8 +7,8 @@ streaming, etc), powered by an external `codex app-server` process.
 Unlike `codex exec`, this tool does **not** run codex-core directly — it launches an external
 `codex app-server` process and renders the streamed events.
 
-This is developer-facing documentation. Start at `docs/wiki/README.md` for the full code wiki, and
-see `docs/wiki/core-architecture.md` for the end-to-end flow.
+This is developer-facing documentation. Start at `README.md` for the full code wiki, and see
+`core-architecture.md` for the end-to-end flow.
 
 ## Ownership
 

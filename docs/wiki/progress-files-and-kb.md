@@ -70,8 +70,8 @@ exploring the codebase:
 - tricky behavior and edge cases
 - upstream vs potter divergences and where they live
 
-It acts as a "working memory" across rounds, while the wiki pages under `docs/` are the durable
-knowledge that should be committed.
+It acts as a "working memory" across rounds, while the wiki pages under `docs/wiki/` are the
+durable knowledge that should be committed.
 
 ### Conventions
 

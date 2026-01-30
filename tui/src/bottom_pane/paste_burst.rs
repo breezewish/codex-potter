@@ -17,7 +17,7 @@
 //! - let input flow through as normal typing.
 //!
 //! For the higher-level view of how `PasteBurst` integrates with `ChatComposer`, see
-//! `docs/tui-chat-composer.md`.
+//! `docs/wiki/tui-chat-composer.md`.
 //!
 //! # Call Pattern
 //!

@@ -25,7 +25,7 @@ Created by `cli/src/project.rs`:
 - `~/.config/codexpotter/config.toml` (or `$XDG_CONFIG_HOME/codexpotter/config.toml`)
   - currently used for `notice.hide_gitignore_prompt` (`cli/src/config.rs`)
 - `~/.codexpotter/history.jsonl`
-  - prompt history for the bottom composer (see `docs/tui-chat-composer.md`)
+  - prompt history for the bottom composer (see `tui-chat-composer.md`)
 - `~/.codexpotter/codex-compat/`
   - a "Codex home" shim created by `cli/src/codex_compat.rs`
   - contains symlinks to `~/.codex/config.toml` and `~/.codex/auth.json`
