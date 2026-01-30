@@ -12,12 +12,12 @@ use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_lines;
 
 /// Widget that displays a list of user messages queued while a task is in progress.
-pub(crate) struct QueuedUserMessages {
-    pub(crate) messages: Vec<String>,
+pub struct QueuedUserMessages {
+    pub messages: Vec<String>,
 }
 
 impl QueuedUserMessages {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             messages: Vec::new(),
         }

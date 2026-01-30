@@ -364,7 +364,7 @@ enum PromptFooterOverride {
     ExternalEditorHint,
 }
 
-pub(crate) async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String>> {
+pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String>> {
     let (app_event_tx_raw, mut app_event_rx) = unbounded_channel::<AppEvent>();
     let app_event_tx = AppEventSender::new(app_event_tx_raw);
 
@@ -627,13 +627,13 @@ impl Default for RenderOnlyTurnOptions {
     }
 }
 
-pub(crate) struct RenderOnlyBackendChannels {
-    pub(crate) codex_op_tx: UnboundedSender<Op>,
-    pub(crate) codex_event_rx: UnboundedReceiver<Event>,
-    pub(crate) fatal_exit_rx: UnboundedReceiver<String>,
+pub struct RenderOnlyBackendChannels {
+    pub codex_op_tx: UnboundedSender<Op>,
+    pub codex_event_rx: UnboundedReceiver<Event>,
+    pub fatal_exit_rx: UnboundedReceiver<String>,
 }
 
-pub(crate) async fn run_render_only_with_tui_options_and_queue(
+pub async fn run_render_only_with_tui_options_and_queue(
     tui: &mut Tui,
     prompt: String,
     options: RenderOnlyTurnOptions,

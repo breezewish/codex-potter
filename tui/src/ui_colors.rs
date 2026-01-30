@@ -7,11 +7,11 @@ use crate::terminal_palette::best_color;
 use crate::terminal_palette::default_bg;
 use crate::terminal_palette::default_fg;
 
-pub(crate) const SECONDARY_LIGHT_RGB: &str = "#7B5BB6";
-pub(crate) const SECONDARY_DARK_RGB: &str = "#F694FF";
+pub const SECONDARY_LIGHT_RGB: &str = "#7B5BB6";
+pub const SECONDARY_DARK_RGB: &str = "#F694FF";
 
-pub(crate) const ORANGE_LIGHT_RGB: &str = "#D68C27";
-pub(crate) const ORANGE_DARK_RGB: &str = "#F5A742";
+pub const ORANGE_LIGHT_RGB: &str = "#D68C27";
+pub const ORANGE_DARK_RGB: &str = "#F5A742";
 
 #[derive(Clone, Copy)]
 struct UiRgbConstants {
@@ -73,7 +73,7 @@ fn choose_rgb_for_theme(
     dark
 }
 
-pub(crate) fn secondary_color() -> Color {
+pub fn secondary_color() -> Color {
     let constants = ui_rgb_constants();
     best_color(choose_rgb_for_theme(
         constants.secondary_light,
@@ -83,7 +83,7 @@ pub(crate) fn secondary_color() -> Color {
     ))
 }
 
-pub(crate) fn orange_color() -> Color {
+pub fn orange_color() -> Color {
     let constants = ui_rgb_constants();
     best_color(choose_rgb_for_theme(
         constants.orange_light,

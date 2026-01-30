@@ -7,15 +7,15 @@ use crate::external_editor;
 use crate::tui;
 use crate::tui::Tui;
 
-pub(crate) const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
-pub(crate) const MISSING_EDITOR_ERROR: &str = "Cannot open external editor: set $VISUAL or $EDITOR";
+pub const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
+pub const MISSING_EDITOR_ERROR: &str = "Cannot open external editor: set $VISUAL or $EDITOR";
 
-pub(crate) fn is_ctrl_g(key_event: &KeyEvent) -> bool {
+pub fn is_ctrl_g(key_event: &KeyEvent) -> bool {
     key_event.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key_event.code, KeyCode::Char('g'))
 }
 
-pub(crate) async fn run_external_editor(
+pub async fn run_external_editor(
     tui: &mut Tui,
     composer: &ChatComposer,
 ) -> anyhow::Result<Option<String>> {

@@ -4,7 +4,7 @@ use std::io::Write;
 use ratatui::backend::Backend;
 
 /// Clears the current inline viewport so the shell prompt is clean after the TUI exits.
-pub(crate) fn clear_inline_viewport_for_exit<B>(
+pub fn clear_inline_viewport_for_exit<B>(
     terminal: &mut crate::custom_terminal::Terminal<B>,
 ) -> io::Result<()>
 where

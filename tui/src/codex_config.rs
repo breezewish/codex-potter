@@ -8,27 +8,27 @@ use toml_edit::DocumentMut;
 use toml_edit::Item as TomlItem;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct CodexModelConfig {
-    pub(crate) model: Option<String>,
-    pub(crate) reasoning_effort: Option<ReasoningEffort>,
-    pub(crate) profile: Option<String>,
-    pub(crate) profiles: HashMap<String, CodexProfileModelConfig>,
-    pub(crate) project_root_markers: Option<Vec<String>>,
+pub struct CodexModelConfig {
+    pub model: Option<String>,
+    pub reasoning_effort: Option<ReasoningEffort>,
+    pub profile: Option<String>,
+    pub profiles: HashMap<String, CodexProfileModelConfig>,
+    pub project_root_markers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct CodexProfileModelConfig {
-    pub(crate) model: Option<String>,
-    pub(crate) reasoning_effort: Option<ReasoningEffort>,
+pub struct CodexProfileModelConfig {
+    pub model: Option<String>,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ResolvedCodexModelConfig {
-    pub(crate) model: String,
-    pub(crate) reasoning_effort: Option<ReasoningEffort>,
+pub struct ResolvedCodexModelConfig {
+    pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
-pub(crate) fn resolve_codex_model_config(cwd: &Path) -> io::Result<ResolvedCodexModelConfig> {
+pub fn resolve_codex_model_config(cwd: &Path) -> io::Result<ResolvedCodexModelConfig> {
     let raw = load_codex_model_config(cwd)?;
 
     let profile_config = match &raw.profile {

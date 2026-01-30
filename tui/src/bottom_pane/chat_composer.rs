@@ -138,7 +138,7 @@ pub enum InputResult {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ChatComposerDraft {
+pub struct ChatComposerDraft {
     text: String,
     cursor: usize,
     pending_pastes: Vec<(String, String)>,
@@ -327,7 +327,7 @@ impl ChatComposer {
         self.sync_popups();
     }
 
-    pub(crate) fn take_draft(&mut self) -> Option<ChatComposerDraft> {
+    pub fn take_draft(&mut self) -> Option<ChatComposerDraft> {
         // Avoid dropping any buffered paste-burst input on suspend.
         if !self.disable_paste_burst {
             if let Some(pasted) = self.paste_burst.flush_before_modified_input() {
@@ -346,7 +346,7 @@ impl ChatComposer {
         if draft.is_empty() { None } else { Some(draft) }
     }
 
-    pub(crate) fn restore_draft(&mut self, draft: ChatComposerDraft) {
+    pub fn restore_draft(&mut self, draft: ChatComposerDraft) {
         self.active_popup = ActivePopup::None;
         self.dismissed_file_popup_token = None;
         self.current_file_query = None;

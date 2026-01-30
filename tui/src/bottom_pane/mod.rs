@@ -17,9 +17,9 @@ mod selection_popup_common;
 mod textarea;
 
 pub use chat_composer::ChatComposer;
-pub(crate) use chat_composer::ChatComposerDraft;
+pub use chat_composer::ChatComposerDraft;
 pub use chat_composer::InputResult;
-pub(crate) use queued_user_messages::QueuedUserMessages;
+pub use queued_user_messages::QueuedUserMessages;
 
 /// How long the "press again to quit" hint stays visible.
 #[cfg(test)]

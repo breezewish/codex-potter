@@ -25,7 +25,7 @@ const ASCII_INDENT: &str = "  ";
 // Bold split positions (0-based, within each ASCII art line after trimming trailing spaces).
 const ASCII_BOLD_SPLIT_COLS: [usize; 9] = [52, 51, 38, 37, 37, 38, 38, 40, 41];
 
-pub(crate) fn build_startup_banner_lines(
+pub fn build_startup_banner_lines(
     width: u16,
     version: &str,
     model_label: &str,
