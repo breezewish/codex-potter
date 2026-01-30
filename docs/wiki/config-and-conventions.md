@@ -80,6 +80,7 @@ Implementation: `cli/src/app_server_backend.rs` (`AppServerLaunchConfig::from_cl
 ### Approval policy
 
 - `thread/start` requests `approvalPolicy: "never"` (`cli/src/app_server_backend.rs`).
+- `thread/start` requests `archived: true` (`cli/src/app_server_backend.rs`).
 - If the app-server still emits approval requests, `codex-potter` auto-accepts them to avoid
   hanging (see `handle_server_request` in `cli/src/app_server_backend.rs`).
 

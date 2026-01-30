@@ -105,6 +105,7 @@ mod tests {
         let request = ClientRequest::ThreadStart {
             request_id: RequestId::Integer(1),
             params: ThreadStartParams {
+                archived: true,
                 model: None,
                 model_provider: None,
                 cwd: None,
@@ -123,6 +124,7 @@ mod tests {
 
         let params = value["params"].as_object().expect("params object");
         for key in [
+            "archived",
             "model",
             "modelProvider",
             "cwd",
@@ -138,6 +140,7 @@ mod tests {
             );
         }
         assert_eq!(value["params"]["approvalPolicy"], "never");
+        assert_eq!(value["params"]["archived"], true);
         assert_eq!(value["params"]["experimentalRawEvents"], false);
     }
 

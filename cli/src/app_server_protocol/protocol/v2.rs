@@ -86,6 +86,9 @@ pub enum SandboxPolicy {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadStartParams {
+    /// When true, instructs the app-server to create the thread as archived.
+    #[serde(default)]
+    pub archived: bool,
     pub model: Option<String>,
     pub model_provider: Option<String>,
     pub cwd: Option<String>,
