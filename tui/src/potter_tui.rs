@@ -86,7 +86,7 @@ impl CodexPotterTui {
     ) -> anyhow::Result<AppExitInfo> {
         let options = crate::app_server_render::RenderOnlyTurnOptions {
             render_user_prompt: false,
-            pad_before_first_cell,
+            pad_before_first_cell: pad_before_first_cell || self.turns_rendered,
         };
         let mut queued = std::mem::take(&mut self.queued_user_prompts);
         let mut composer_draft = self.composer_draft.take();
