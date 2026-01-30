@@ -42,13 +42,15 @@ Run the workflow below to make steady progress toward the overall goal recorded 
    - Break large tasks into small, concrete steps; adjust tasks as understanding improves.
 
 5. If all `Todo` tasks are complete, it does not mean the work is done. Instead:
-   - Perform a thorough review against `Overall Goal`; add concrete tasks to `Todo` for any missing parts.
+   - Perform a thorough review on what has changed so far against `Overall Goal`; add concrete tasks to `Todo` for any missing parts.
    - Identify possible improvements and add them to `Todo`, if user was asking to make changes:
      - Coding kind: polish, simplification/completion, quality, performance, edge cases, error handling, UX, docs, etc.
      - Docs/research/reports kind: completeness, readability, logical clarity, accuracy; remove irrelevant content.
    - Stop if you are very certain everything is done and no further improvements are possible.
 
-   Important: if the user request was fulfilled by replying directly without any artifact files or code changes, you can stop once all tasks are done — no further improvements are needed.
+   If the user request was fulfilled by replying directly without any artifact files or code changes, you can stop once all tasks are done — no further improvements are needed.
+
+   Progress file's front matter recorded the git commit before any work in progress file began; use it to identify what has changed so far.
 
 **Requirements:**
 
