@@ -541,7 +541,7 @@ mod tests {
         let lines = contents.lines().collect::<Vec<_>>();
 
         assert!(
-            !lines.get(0).copied().unwrap_or_default().contains('X'),
+            !lines.first().copied().unwrap_or_default().contains('X'),
             "expected the first row to be cleared, got:\n{contents}",
         );
         assert_eq!(lines[1].chars().next().unwrap_or('?'), 'Y');

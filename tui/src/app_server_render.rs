@@ -2325,7 +2325,7 @@ mod tests {
                     query: Some("README.md".into()),
                     path: Some(".codexpotter".into()),
                 }],
-                ..base.clone()
+                ..base
             }),
         });
 
