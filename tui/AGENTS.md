@@ -42,6 +42,12 @@ Unless explicitly documented below, changes should preserve parity.
 - codex-potter explicitly forbids `pub(crate)` visibility in TUI code; only `pub` and private items are allowed.
 - codex-potter does not use Bazel.
 
+### Convensions
+
+- Test: Always use snapshot tests (without ASCII escape sequences) for TUI rendering tests, so that it is visually clear what the output looks like, unless the test or code comes from upstream codex where non-snapshot tests are used, in which case you must preserve parity.
+
+- Isolate divergent code paths: Prefer to use a new file to isolate changed logic from upstream codex, and keep the original file as a subset of the upstream's file, if the changed logic is significant. In this way, we can easily learn what has changed from upstream, and reduce merge conflicts when syncing from upstream.
+
 ## TUI Style conventions
 
 See `styles.md`.
