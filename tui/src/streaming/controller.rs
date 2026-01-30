@@ -83,7 +83,7 @@ impl StreamController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use insta::assert_snapshot;
+    use pretty_assertions::assert_eq;
 
     fn lines_to_plain_strings(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
         lines
@@ -178,7 +178,7 @@ mod tests {
         for d in deltas.iter() {
             ctrl.push(d);
             while let (Some(cell), idle) = ctrl.on_commit_tick() {
-                lines.extend(cell.display_lines(u16::MAX));
+                lines.extend(cell.transcript_lines(u16::MAX));
                 if idle {
                     break;
                 }
@@ -186,7 +186,7 @@ mod tests {
         }
         // Finalize and flush remaining lines now.
         if let Some(cell) = ctrl.finalize() {
-            lines.extend(cell.display_lines(u16::MAX));
+            lines.extend(cell.transcript_lines(u16::MAX));
         }
 
         let streamed: Vec<_> = lines_to_plain_strings(&lines)
@@ -203,10 +203,22 @@ mod tests {
 
         assert_eq!(streamed, rendered_strs);
 
-        let rendered = streamed.join("\n") + "\n";
-        assert_snapshot!(
-            "controller_loose_vs_tight_with_commit_ticks_matches_full",
-            rendered
+        // Also assert exact expected plain strings for clarity.
+        let expected = vec![
+            "Loose vs. tight list items:".to_string(),
+            "".to_string(),
+            "1. Tight item".to_string(),
+            "2. Another tight item".to_string(),
+            "3. Loose item with its own paragraph.".to_string(),
+            "".to_string(),
+            "   This paragraph belongs to the same list item.".to_string(),
+            "4. Second loose item with a nested list after a blank line.".to_string(),
+            "    - Nested bullet under a loose item".to_string(),
+            "    - Another nested bullet".to_string(),
+        ];
+        assert_eq!(
+            streamed, expected,
+            "expected exact rendered lines for loose/tight section"
         );
     }
 }

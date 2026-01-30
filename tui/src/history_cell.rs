@@ -48,8 +48,37 @@ pub trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
             .unwrap_or(0)
     }
 
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.display_lines(width)
+    }
+
+    fn desired_transcript_height(&self, width: u16) -> u16 {
+        let lines = self.transcript_lines(width);
+
+        // Workaround for ratatui bug: if there's only one line and it's whitespace-only, ratatui
+        // gives 2 lines.
+        if let [line] = &lines[..]
+            && line
+                .spans
+                .iter()
+                .all(|span| span.content.chars().all(char::is_whitespace))
+        {
+            return 1;
+        }
+
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .line_count(width)
+            .try_into()
+            .unwrap_or(0)
+    }
+
     fn is_stream_continuation(&self) -> bool {
         false
+    }
+
+    fn transcript_animation_tick(&self) -> Option<u64> {
+        None
     }
 }
 
