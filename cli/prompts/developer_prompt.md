@@ -14,7 +14,7 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 2. Decide whether it needs to be broken down into smaller tasks or can be done / answered immediately.
    - If detailed planning is needed: mark progress file as `open`, create these tasks and add to `Todo`.
    - If user request can be completed immediately: do so, mark progress file as `skip`. No need to create any tasks.
-     - Additionally respond `{{DONE_MARKER}}` if you have not changed any code since you received this workflow instruction.
+     - Additionally update progress file's `potterflag` to true if you have not changed any code since you received this workflow instruction.
 
 **If status == open:**
 
@@ -46,7 +46,7 @@ Run the workflow below to make steady progress toward the overall goal recorded 
      - Coding kind: polish, simplification/completion, quality, performance, edge cases, error handling, UX, docs, etc.
      - Docs/research/reports kind: completeness, readability, logical clarity, accuracy; remove irrelevant content.
    - Stop if you are very certain everything is done and no further improvements are possible.
-     - Additionally respond `{{DONE_MARKER}}` if you have not changed any code since you received this workflow instruction.
+     - Additionally update progress file's `potterflag` to true if you have not changed any code since you received this workflow instruction.
 
    Important: if the user request was fulfilled by replying directly without any artifact files or code changes, you can stop once all tasks are done — no further improvements are needed.
 
