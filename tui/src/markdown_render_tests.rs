@@ -878,8 +878,7 @@ fn ordered_item_with_code_block_and_nested_bullet() {
             "2. item 2".to_string(),
             String::new(),
             "   code".to_string(),
-            "    - PROCESS_START (a OnceLock<Instant>) keeps the start time for the entire process."
-                .to_string(),
+            "    - PROCESS_START (a OnceLock<Instant>) keeps the start time for the entire process.".to_string(),
         ]
     );
 }

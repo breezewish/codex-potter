@@ -21,6 +21,16 @@ impl Insets {
             right,
         }
     }
+
+    #[allow(dead_code)]
+    pub fn vh(v: u16, h: u16) -> Self {
+        Self {
+            top: v,
+            left: h,
+            bottom: v,
+            right: h,
+        }
+    }
 }
 
 pub trait RectExt {
