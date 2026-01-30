@@ -51,13 +51,21 @@ pub fn render_project_main(user_prompt: &str) -> String {
 
 pub fn render_developer_prompt(progress_file_rel: &Path) -> String {
     let progress_file_rel = progress_file_rel.to_string_lossy();
-    DEVELOPER_PROMPT_TEMPLATE
-        .replace("{{PROGRESS_FILE}}", &progress_file_rel)
-        .replace("{{DONE_MARKER}}", crate::DONE_MARKER)
+    DEVELOPER_PROMPT_TEMPLATE.replace("{{PROGRESS_FILE}}", &progress_file_rel)
 }
 
 pub fn fixed_prompt() -> &'static str {
     PROMPT_TEMPLATE
+}
+
+pub fn progress_file_has_potterflag_true(
+    workdir: &Path,
+    progress_file_rel: &Path,
+) -> anyhow::Result<bool> {
+    let progress_file = workdir.join(progress_file_rel);
+    let contents = std::fs::read_to_string(&progress_file)
+        .with_context(|| format!("read {}", progress_file.display()))?;
+    Ok(front_matter_bool(&contents, "potterflag").unwrap_or(false))
 }
 
 fn create_next_project_dir(projects_root: &Path, date: &str) -> anyhow::Result<(PathBuf, PathBuf)> {
@@ -79,6 +87,37 @@ fn create_next_project_dir(projects_root: &Path, date: &str) -> anyhow::Result<(
     }
 
     unreachable!("project index overflow");
+}
+
+fn front_matter_bool(contents: &str, key: &str) -> Option<bool> {
+    let mut lines = contents.lines();
+    let first = lines.next()?.trim_end();
+    if first != "---" {
+        return None;
+    }
+
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if k.trim() != key {
+            continue;
+        }
+
+        let raw = v.trim();
+        let first_token = raw.split_whitespace().next().unwrap_or_default();
+        let unquoted = first_token.trim_matches(&['"', '\''][..]);
+        return Some(unquoted.eq_ignore_ascii_case("true"));
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -121,13 +160,48 @@ mod tests {
 
         let developer = render_developer_prompt(&second.progress_file_rel);
         assert!(developer.contains(".codexpotter/projects/20260127_2/MAIN.md"));
-        assert!(developer.contains(crate::DONE_MARKER));
-        assert!(!developer.contains("{{PROGRESS_FILE}}"));
-        assert!(!developer.contains("{{DONE_MARKER}}"));
+    }
 
-        assert!(DEVELOPER_PROMPT_TEMPLATE.contains("{{DONE_MARKER}}"));
-        assert!(!DEVELOPER_PROMPT_TEMPLATE.contains(crate::DONE_MARKER));
+    #[test]
+    fn progress_file_has_potterflag_true_reads_front_matter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let progress = temp.path().join("MAIN.md");
+        std::fs::write(
+            &progress,
+            r#"---
+status: open
+potterflag: true
+---
 
-        assert!(fixed_prompt().contains("Continue working according to the WORKFLOW_INSTRUCTIONS"));
+# Overall Goal
+"#,
+        )
+        .expect("write progress file");
+
+        let rel = PathBuf::from("MAIN.md");
+        let flagged =
+            progress_file_has_potterflag_true(temp.path(), &rel).expect("read potterflag");
+        assert!(flagged);
+    }
+
+    #[test]
+    fn progress_file_has_potterflag_true_is_false_when_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let progress = temp.path().join("MAIN.md");
+        std::fs::write(
+            &progress,
+            r#"---
+status: open
+---
+
+# Overall Goal
+"#,
+        )
+        .expect("write progress file");
+
+        let rel = PathBuf::from("MAIN.md");
+        let flagged =
+            progress_file_has_potterflag_true(temp.path(), &rel).expect("read potterflag");
+        assert!(!flagged);
     }
 }

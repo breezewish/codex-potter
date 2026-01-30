@@ -18,7 +18,8 @@ Unlike `codex exec`, this tool does **not** run codex-core directly — it launc
    - starts a fresh `codex app-server`
    - injects a fixed developer prompt pointing at the progress file
    - submits a fixed prompt: `Continue working according to the agreed workflow and the progress tracking file.`
-5. Stops early if the agent outputs: `<codexpotter>All work is complete</codexpotter>`.
+5. Stops early for the current project if the progress file front matter contains `potterflag: true`
+   (checked after each turn; queued projects continue normally).
 
 ## Usage
 

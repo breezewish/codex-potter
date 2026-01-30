@@ -5,7 +5,6 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
-use crate::DONE_MARKER;
 use crate::app_server_protocol::ApplyPatchApprovalResponse;
 use crate::app_server_protocol::ClientInfo;
 use crate::app_server_protocol::ClientNotification;
@@ -73,17 +72,9 @@ impl AppServerLaunchConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BackendOutcome {
-    pub done_marker_seen: bool,
-}
-
 #[derive(Debug, Default)]
 struct BackendMessageState {
     turn_complete_seen: bool,
-    done_marker_seen: bool,
-    saw_agent_delta: bool,
-    agent_message_buf: String,
 }
 
 pub async fn run_app_server_backend(
@@ -94,7 +85,7 @@ pub async fn run_app_server_backend(
     mut op_rx: UnboundedReceiver<Op>,
     event_tx: UnboundedSender<Event>,
     fatal_exit_tx: UnboundedSender<String>,
-) -> anyhow::Result<BackendOutcome> {
+) -> anyhow::Result<()> {
     match run_app_server_backend_inner(
         codex_bin,
         developer_instructions,
@@ -106,7 +97,7 @@ pub async fn run_app_server_backend(
     )
     .await
     {
-        Ok(outcome) => Ok(outcome),
+        Ok(()) => Ok(()),
         Err(err) => {
             let message = format!("Failed to run `codex app-server`: {err}");
             let _ = event_tx.send(Event {
@@ -120,9 +111,7 @@ pub async fn run_app_server_backend(
 
             // Surface backend failures via the UI and exit reason, instead of bubbling up an
             // additional anyhow error that would get printed after the TUI exits.
-            Ok(BackendOutcome {
-                done_marker_seen: false,
-            })
+            Ok(())
         }
     }
 }
@@ -135,7 +124,7 @@ async fn run_app_server_backend_inner(
     op_rx: &mut UnboundedReceiver<Op>,
     event_tx: &UnboundedSender<Event>,
     fatal_exit_tx: &UnboundedSender<String>,
-) -> anyhow::Result<BackendOutcome> {
+) -> anyhow::Result<()> {
     let (mut child, stdin, stdout, stderr) = spawn_app_server(&codex_bin, launch).await?;
     let stderr_capture = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stderr_truncated = Arc::new(AtomicBool::new(false));
@@ -307,9 +296,7 @@ async fn run_app_server_backend_inner(
         let _ = fatal_exit_tx.send(message);
     }
 
-    Ok(BackendOutcome {
-        done_marker_seen: message_state.done_marker_seen,
-    })
+    Ok(())
 }
 
 async fn spawn_app_server(
@@ -517,27 +504,6 @@ fn handle_codex_event_notification(
     };
 
     let event: Event = serde_json::from_value(params)?;
-    match &event.msg {
-        EventMsg::AgentMessageDelta(ev) => {
-            message_state.saw_agent_delta = true;
-            message_state.agent_message_buf.push_str(&ev.delta);
-        }
-        EventMsg::AgentMessage(ev) => {
-            if !message_state.saw_agent_delta {
-                message_state.agent_message_buf = ev.message.clone();
-            }
-        }
-        EventMsg::TurnComplete(ev) => {
-            if let Some(last) = &ev.last_agent_message {
-                if last.contains(DONE_MARKER) {
-                    message_state.done_marker_seen = true;
-                }
-            } else if message_state.agent_message_buf.contains(DONE_MARKER) {
-                message_state.done_marker_seen = true;
-            }
-        }
-        _ => {}
-    }
     if matches!(
         event.msg,
         EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_) | EventMsg::Error(_)
@@ -700,21 +666,20 @@ fn next_request_id(next_id: &mut i64) -> RequestId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::protocol::AgentMessageDeltaEvent;
     use codex_protocol::protocol::TurnCompleteEvent;
     use tokio::sync::mpsc::unbounded_channel;
     use tokio::time::Duration;
     use tokio::time::timeout;
 
     #[test]
-    fn done_marker_seen_from_turn_complete_last_agent_message() {
+    fn turn_complete_sets_turn_complete_seen() {
         let (event_tx, _event_rx) = unbounded_channel::<Event>();
         let mut state = BackendMessageState::default();
 
         let event = Event {
             id: "1".to_string(),
             msg: EventMsg::TurnComplete(TurnCompleteEvent {
-                last_agent_message: Some(format!("ok {DONE_MARKER}")),
+                last_agent_message: Some("ok".to_string()),
             }),
         };
         handle_codex_event_notification(
@@ -725,44 +690,6 @@ mod tests {
         )
         .expect("handle event");
 
-        assert!(state.done_marker_seen);
-        assert!(state.turn_complete_seen);
-    }
-
-    #[test]
-    fn done_marker_seen_from_agent_delta_buffer_when_turn_complete_has_no_last_message() {
-        let (event_tx, _event_rx) = unbounded_channel::<Event>();
-        let mut state = BackendMessageState::default();
-
-        let delta_event = Event {
-            id: "1".to_string(),
-            msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
-                delta: format!("hello {DONE_MARKER} world"),
-            }),
-        };
-        handle_codex_event_notification(
-            "codex/event/test",
-            Some(serde_json::to_value(delta_event).expect("serialize delta event")),
-            &event_tx,
-            &mut state,
-        )
-        .expect("handle delta");
-
-        let complete_event = Event {
-            id: "1".to_string(),
-            msg: EventMsg::TurnComplete(TurnCompleteEvent {
-                last_agent_message: None,
-            }),
-        };
-        handle_codex_event_notification(
-            "codex/event/test",
-            Some(serde_json::to_value(complete_event).expect("serialize complete event")),
-            &event_tx,
-            &mut state,
-        )
-        .expect("handle complete");
-
-        assert!(state.done_marker_seen);
         assert!(state.turn_complete_seen);
     }
 

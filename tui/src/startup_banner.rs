@@ -133,6 +133,7 @@ pub fn build_startup_banner_lines(
         ));
     }
     lines.push(Line::from(directory_spans));
+    lines.push(Line::from(""));
 
     lines
 }

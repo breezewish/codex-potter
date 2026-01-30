@@ -9,8 +9,6 @@ mod project;
 mod prompt_queue;
 mod startup;
 
-const DONE_MARKER: &str = "<codexpotter>All work is complete</codexpotter>";
-
 use std::num::NonZeroUsize;
 
 use anyhow::Context;
@@ -196,10 +194,12 @@ async fn main() -> anyhow::Result<()> {
                 ExitReason::Completed => {}
             }
 
-            let backend_outcome = backend
+            backend
                 .await
                 .context("app-server render backend panicked")??;
-            if backend_outcome.done_marker_seen {
+            if crate::project::progress_file_has_potterflag_true(&workdir, &init.progress_file_rel)
+                .context("check progress file potterflag")?
+            {
                 break;
             }
         }
