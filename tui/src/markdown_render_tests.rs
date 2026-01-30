@@ -77,8 +77,13 @@ fn blockquote_soft_break() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_soft_break", rendered);
+    assert_eq!(
+        lines,
+        vec![
+            "> This is a blockquote".to_string(),
+            "> with a soft break".to_string()
+        ]
+    );
 }
 
 #[test]
@@ -169,7 +174,7 @@ fn list_item_with_inline_blockquote_on_same_line() {
     let first = lines.next().expect("one line");
     // Expect content to include the ordered marker, a space, "> ", and the text
     let s: String = first.spans.iter().map(|sp| sp.content.clone()).collect();
-    assert_snapshot!("list_item_with_inline_blockquote_on_same_line", s);
+    assert_eq!(s, "1. > quoted");
 }
 
 #[test]
@@ -186,8 +191,16 @@ fn blockquote_surrounded_by_blank_lines() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_surrounded_by_blank_lines", rendered);
+    assert_eq!(
+        lines,
+        vec![
+            "foo".to_string(),
+            "".to_string(),
+            "> bar".to_string(),
+            "".to_string(),
+            "baz".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -206,8 +219,7 @@ fn blockquote_in_ordered_list_on_next_line() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_in_ordered_list_on_next_line", rendered);
+    assert_eq!(lines, vec!["1. > quoted".to_string()]);
 }
 
 #[test]
@@ -226,8 +238,7 @@ fn blockquote_in_unordered_list_on_next_line() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_in_unordered_list_on_next_line", rendered);
+    assert_eq!(lines, vec!["- > quoted".to_string()]);
 }
 
 #[test]
@@ -245,10 +256,14 @@ fn blockquote_two_paragraphs_inside_ordered_list_has_blank_line() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!(
-        "blockquote_two_paragraphs_inside_ordered_list_has_blank_line",
-        rendered
+    assert_eq!(
+        lines,
+        vec![
+            "1. > para 1".to_string(),
+            "   > ".to_string(),
+            "   > para 2".to_string(),
+        ],
+        "expected blockquote content to stay aligned after list marker"
     );
 }
 
@@ -266,8 +281,7 @@ fn blockquote_inside_nested_list() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_inside_nested_list", rendered);
+    assert_eq!(lines, vec!["1. A", "    - B", "      > inner"]);
 }
 
 #[test]
@@ -284,8 +298,7 @@ fn list_item_text_then_blockquote() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("list_item_text_then_blockquote", rendered);
+    assert_eq!(lines, vec!["1. before", "   > quoted"]);
 }
 
 #[test]
@@ -302,8 +315,7 @@ fn list_item_blockquote_then_text() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("list_item_blockquote_then_text", rendered);
+    assert_eq!(lines, vec!["1. > quoted", "   > after"]);
 }
 
 #[test]
@@ -320,8 +332,7 @@ fn list_item_text_blockquote_text() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("list_item_text_blockquote_text", rendered);
+    assert_eq!(lines, vec!["1. before", "   > quoted", "   > after"]);
 }
 
 #[test]
@@ -339,8 +350,14 @@ fn blockquote_with_heading_and_paragraph() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_with_heading_and_paragraph", rendered);
+    assert_eq!(
+        lines,
+        vec![
+            "> # Heading".to_string(),
+            "> ".to_string(),
+            "> paragraph text".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -375,8 +392,7 @@ fn blockquote_with_code_block() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_with_code_block", rendered);
+    assert_eq!(lines, vec!["> code".to_string()]);
 }
 
 #[test]
@@ -393,8 +409,7 @@ fn blockquote_with_multiline_code_block() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("blockquote_with_multiline_code_block", rendered);
+    assert_eq!(lines, vec!["> first", "> second"]);
 }
 
 #[test]
@@ -427,8 +442,17 @@ fn nested_blockquote_with_inline_and_fenced_code() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("nested_blockquote_with_inline_and_fenced_code", rendered);
+    assert_eq!(
+        lines,
+        vec![
+            "> Nested quote with code:".to_string(),
+            "> ".to_string(),
+            "> > Inner quote and inline code".to_string(),
+            "> > ".to_string(),
+            "> > # fenced code inside a quote".to_string(),
+            "> > echo \"hello from a quote\"".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -671,8 +695,7 @@ fn horizontal_rule_renders_em_dashes() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("horizontal_rule_renders_em_dashes", rendered);
+    assert_eq!(lines, vec!["Before", "", "———", "", "After"]);
 }
 
 #[test]
@@ -698,8 +721,18 @@ Here is a code block that shows another fenced block:
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("code_block_with_inner_triple_backticks_outer_four", rendered);
+    assert_eq!(
+        lines,
+        vec![
+            "Here is a code block that shows another fenced block:".to_string(),
+            String::new(),
+            "```md".to_string(),
+            "# Inside fence".to_string(),
+            "- bullet".to_string(),
+            "- `inline code`".to_string(),
+            "```".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -716,8 +749,7 @@ fn code_block_inside_unordered_list_item_is_indented() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("code_block_inside_unordered_list_item_is_indented", rendered);
+    assert_eq!(lines, vec!["- Item", "", "  code line"]);
 }
 
 #[test]
@@ -734,8 +766,7 @@ fn code_block_multiple_lines_inside_unordered_list() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("code_block_multiple_lines_inside_unordered_list", rendered);
+    assert_eq!(lines, vec!["- Item", "", "  first", "  second"]);
 }
 
 #[test]
@@ -752,8 +783,7 @@ fn code_block_inside_unordered_list_item_multiple_lines() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("code_block_inside_unordered_list_item_multiple_lines", rendered);
+    assert_eq!(lines, vec!["- Item", "", "  first", "  second"]);
 }
 
 #[test]
@@ -841,8 +871,17 @@ fn ordered_item_with_code_block_and_nested_bullet() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("ordered_item_with_code_block_and_nested_bullet", rendered);
+    assert_eq!(
+        lines,
+        vec![
+            "1. item 1".to_string(),
+            "2. item 2".to_string(),
+            String::new(),
+            "   code".to_string(),
+            "    - PROCESS_START (a OnceLock<Instant>) keeps the start time for the entire process."
+                .to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -919,8 +958,15 @@ fn unordered_item_continuation_paragraph_is_indented() {
                 .collect::<String>()
         })
         .collect();
-    let rendered = lines.join("\n") + "\n";
-    assert_snapshot!("unordered_item_continuation_paragraph_is_indented", rendered);
+    assert_eq!(
+        lines,
+        vec![
+            "- Intro".to_string(),
+            String::new(),
+            "  Continuation paragraph line 1".to_string(),
+            "  Continuation paragraph line 2".to_string(),
+        ]
+    );
 }
 
 #[test]

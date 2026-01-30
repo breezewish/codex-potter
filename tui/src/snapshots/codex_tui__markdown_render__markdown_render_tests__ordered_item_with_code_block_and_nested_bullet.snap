@@ -1,9 +1,0 @@
----
-source: tui/src/markdown_render_tests.rs
-expression: rendered
----
-1. item 1
-2. item 2
-
-   code
-    - PROCESS_START (a OnceLock<Instant>) keeps the start time for the entire process.

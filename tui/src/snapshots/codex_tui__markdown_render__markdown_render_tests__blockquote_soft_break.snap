@@ -1,6 +1,0 @@
----
-source: tui/src/markdown_render_tests.rs
-expression: rendered
----
-> This is a blockquote
-> with a soft break

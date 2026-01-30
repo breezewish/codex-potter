@@ -1,8 +1,0 @@
----
-source: tui/src/markdown_render_tests.rs
-expression: rendered
----
-- Intro
-
-  Continuation paragraph line 1
-  Continuation paragraph line 2
