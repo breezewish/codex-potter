@@ -496,10 +496,43 @@ impl ExecCell {
         };
         let highlighted_lines = highlight_bash_to_lines(&cmd_display);
 
-        let available_width = (width as usize).saturating_sub(header_prefix_width);
-        extend_line_with_command_preview(&mut header_line, &highlighted_lines, available_width);
+        let continuation_wrap_width = layout.command_continuation.wrap_width(width);
+        let continuation_opts =
+            RtOptions::new(continuation_wrap_width).word_splitter(WordSplitter::NoHyphenation);
+        let mut continuation_lines: Vec<Line<'static>> = Vec::new();
+        if let Some((first, rest)) = highlighted_lines.split_first() {
+            let available_first_width = (width as usize).saturating_sub(header_prefix_width).max(1);
+            let first_opts =
+                RtOptions::new(available_first_width).word_splitter(WordSplitter::NoHyphenation);
+            let mut first_wrapped: Vec<Line<'static>> = Vec::new();
+            push_owned_lines(&word_wrap_line(first, first_opts), &mut first_wrapped);
+            let mut first_wrapped_iter = first_wrapped.into_iter();
+            if let Some(first_segment) = first_wrapped_iter.next() {
+                header_line.extend(first_segment);
+            }
+            continuation_lines.extend(first_wrapped_iter);
+
+            for line in rest {
+                push_owned_lines(
+                    &word_wrap_line(line, continuation_opts.clone()),
+                    &mut continuation_lines,
+                );
+            }
+        }
 
         let mut lines: Vec<Line<'static>> = vec![header_line];
+
+        let continuation_lines = Self::limit_lines_from_start(
+            &continuation_lines,
+            layout.command_continuation_max_lines,
+        );
+        if !continuation_lines.is_empty() {
+            lines.extend(prefix_lines(
+                continuation_lines,
+                Span::from(layout.command_continuation.initial_prefix).dim(),
+                Span::from(layout.command_continuation.subsequent_prefix).dim(),
+            ));
+        }
 
         if suppress_output {
             return lines;
@@ -607,6 +640,19 @@ impl ExecCell {
         lines
     }
 
+    fn limit_lines_from_start(lines: &[Line<'static>], keep: usize) -> Vec<Line<'static>> {
+        if lines.len() <= keep {
+            return lines.to_vec();
+        }
+        if keep == 0 {
+            return vec![Self::ellipsis_line(lines.len())];
+        }
+
+        let mut out: Vec<Line<'static>> = lines[..keep].to_vec();
+        out.push(Self::ellipsis_line(lines.len() - keep));
+        out
+    }
+
     fn truncate_lines_middle(
         lines: &[Line<'static>],
         max: usize,
@@ -682,21 +728,34 @@ impl PrefixedBlock {
 
 #[derive(Clone, Copy)]
 struct ExecDisplayLayout {
+    command_continuation: PrefixedBlock,
+    command_continuation_max_lines: usize,
     output_block: PrefixedBlock,
     output_max_lines: usize,
 }
 
 impl ExecDisplayLayout {
-    const fn new(output_block: PrefixedBlock, output_max_lines: usize) -> Self {
+    const fn new(
+        command_continuation: PrefixedBlock,
+        command_continuation_max_lines: usize,
+        output_block: PrefixedBlock,
+        output_max_lines: usize,
+    ) -> Self {
         Self {
+            command_continuation,
+            command_continuation_max_lines,
             output_block,
             output_max_lines,
         }
     }
 }
 
-const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout =
-    ExecDisplayLayout::new(PrefixedBlock::new("  └ ", "    "), 5);
+const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
+    PrefixedBlock::new("  │ ", "  │ "),
+    2,
+    PrefixedBlock::new("  └ ", "    "),
+    5,
+);
 
 #[cfg(test)]
 mod tests {
@@ -820,69 +879,6 @@ mod tests {
         assert!(
             output_screen_lines <= USER_SHELL_TOOL_CALL_MAX_LINES,
             "expected at most {USER_SHELL_TOOL_CALL_MAX_LINES} screen lines of user shell output, got {output_screen_lines}",
-        );
-    }
-
-    #[test]
-    fn ran_multiline_command_displays_first_line_with_line_count_suffix() {
-        let script = "python - <<'PY'\necho 1\necho 2\nPY";
-        let cell = ExecCell::new(finished_call(script), false);
-
-        let lines = cell.command_display_lines(80);
-        assert_eq!(
-            plain_strings(&lines),
-            vec!["• Ran python - <<'PY' (... 3 lines)".to_string()]
-        );
-    }
-
-    #[test]
-    fn ran_long_single_line_truncates_with_ellipsis() {
-        let script = format!("echo {}", "a".repeat(200));
-        let cell = ExecCell::new(finished_call(&script), false);
-
-        let width = 40;
-        let lines = cell.command_display_lines(width);
-        let [line] = lines.as_slice() else {
-            panic!("expected exactly one line, got {}", lines.len());
-        };
-
-        let plain = plain_strings(lines.as_slice())
-            .into_iter()
-            .next()
-            .expect("missing line");
-        assert!(plain.starts_with("• Ran echo "));
-        assert!(plain.ends_with("..."), "expected ellipsis: {plain:?}");
-        assert!(
-            line.width() <= width as usize,
-            "expected line width <= {width}, got {}: {plain:?}",
-            line.width()
-        );
-    }
-
-    #[test]
-    fn ran_multiline_long_first_line_reserves_suffix_within_width() {
-        let first = format!("git show HEAD:{}", "x".repeat(200));
-        let script = format!("{first}\necho 1\necho 2");
-        let cell = ExecCell::new(finished_call(&script), false);
-
-        let width = 50;
-        let lines = cell.command_display_lines(width);
-        let [line] = lines.as_slice() else {
-            panic!("expected exactly one line, got {}", lines.len());
-        };
-
-        let plain = plain_strings(lines.as_slice())
-            .into_iter()
-            .next()
-            .expect("missing line");
-        assert!(
-            plain.ends_with("(... 2 lines)"),
-            "expected multiline suffix: {plain:?}"
-        );
-        assert!(
-            line.width() <= width as usize,
-            "expected line width <= {width}, got {}: {plain:?}",
-            line.width()
         );
     }
 
