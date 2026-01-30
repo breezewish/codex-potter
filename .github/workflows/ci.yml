@@ -16,6 +16,7 @@ concurrency:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
   rust:
@@ -44,6 +45,8 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: ${{ matrix.check.command }}
         run: ${{ matrix.check.command }}
