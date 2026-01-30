@@ -14,7 +14,6 @@ use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::user_input::UserInput;
 use ratatui::layout::Rect;
 use ratatui::prelude::Widget;
-use ratatui::style::Stylize;
 use ratatui::text::Line;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
@@ -25,9 +24,11 @@ use crate::AppExitInfo;
 use crate::ExitReason;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::bottom_pane::BottomPane;
+use crate::bottom_pane::BottomPaneParams;
 use crate::bottom_pane::ChatComposer;
 use crate::bottom_pane::InputResult;
-use crate::bottom_pane::QueuedUserMessages;
+use crate::bottom_pane::PromptFooterOverride;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCell;
 use crate::exec_cell::new_active_exec_command;
@@ -36,279 +37,14 @@ use crate::file_search::FileSearchManager;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
 use crate::render::renderable::Renderable;
-use crate::status_indicator_widget::StatusIndicatorWidget;
 use crate::streaming::controller::StreamController;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
 
-struct RenderOnlyFooter {
-    status: Option<StatusIndicatorWidget>,
-    status_header: String,
-    status_header_prefix: Option<String>,
-    status_details: Option<String>,
-    context_window_percent: Option<i64>,
-    context_window_used_tokens: Option<i64>,
-    frame_requester: crate::tui::FrameRequester,
-    animations_enabled: bool,
-}
-
-impl RenderOnlyFooter {
-    fn new(frame_requester: crate::tui::FrameRequester, animations_enabled: bool) -> Self {
-        Self {
-            status: None,
-            status_header: String::from("Working"),
-            status_header_prefix: None,
-            status_details: None,
-            context_window_percent: None,
-            context_window_used_tokens: None,
-            frame_requester,
-            animations_enabled,
-        }
-    }
-
-    fn status_header_with_prefix(&self) -> String {
-        let Some(prefix) = self.status_header_prefix.as_deref() else {
-            return self.status_header.clone();
-        };
-
-        if self.status_header.is_empty() {
-            prefix.to_string()
-        } else {
-            format!("{prefix} · {}", self.status_header)
-        }
-    }
-
-    fn set_task_running(&mut self, running: bool) {
-        if running {
-            if self.status.is_none() {
-                self.status = Some(self.new_status_indicator());
-            }
-            self.request_redraw();
-        } else {
-            self.hide_status_indicator();
-        }
-    }
-
-    fn hide_status_indicator(&mut self) {
-        if self.status.take().is_some() {
-            self.request_redraw();
-        }
-    }
-
-    fn set_context_window(&mut self, percent: Option<i64>, used_tokens: Option<i64>) {
-        if self.context_window_percent == percent && self.context_window_used_tokens == used_tokens
-        {
-            return;
-        }
-
-        self.context_window_percent = percent;
-        self.context_window_used_tokens = used_tokens;
-
-        if let Some(status) = self.status.as_mut() {
-            status.set_context_window_visible(true);
-            status.set_context_window_percent(percent);
-            status.set_context_window_used_tokens(used_tokens);
-        }
-        self.request_redraw();
-    }
-
-    fn new_status_indicator(&self) -> StatusIndicatorWidget {
-        let mut status =
-            StatusIndicatorWidget::new(self.frame_requester.clone(), self.animations_enabled);
-        status.update_header(self.status_header_with_prefix());
-        status.update_details(self.status_details.clone());
-        status.set_interrupt_hint_visible(true);
-        status.set_context_window_visible(true);
-        status.set_context_window_percent(self.context_window_percent);
-        status.set_context_window_used_tokens(self.context_window_used_tokens);
-        status
-    }
-
-    fn update_status(&mut self, header: String, details: Option<String>) {
-        self.status_header = header;
-        self.status_details = details;
-        let header = self.status_header_with_prefix();
-        if let Some(status) = self.status.as_mut() {
-            status.update_header(header);
-            status.update_details(self.status_details.clone());
-        }
-        self.request_redraw();
-    }
-
-    fn update_status_prefix(&mut self, prefix: Option<String>) {
-        let prefix = prefix.filter(|value| !value.is_empty());
-        if self.status_header_prefix == prefix {
-            return;
-        }
-        self.status_header_prefix = prefix;
-        let header = self.status_header_with_prefix();
-        if let Some(status) = self.status.as_mut() {
-            status.update_header(header);
-        }
-        self.request_redraw();
-    }
-
-    fn request_redraw(&self) {
-        self.frame_requester.schedule_frame();
-    }
-}
-
-struct RenderOnlyBottomPane {
-    footer: RenderOnlyFooter,
-    queued_user_messages: QueuedUserMessages,
-    composer: ChatComposer,
-    prompt_footer_override: Option<PromptFooterOverride>,
-}
-
-impl RenderOnlyBottomPane {
-    fn new(
-        frame_requester: crate::tui::FrameRequester,
-        enhanced_keys_supported: bool,
-        app_event_tx: AppEventSender,
-        animations_enabled: bool,
-        placeholder_text: String,
-    ) -> Self {
-        let mut composer = ChatComposer::new(
-            true,
-            app_event_tx,
-            enhanced_keys_supported,
-            placeholder_text,
-            false,
-        );
-        composer.set_footer_hint_override(Some(Vec::new()));
-
-        Self {
-            footer: RenderOnlyFooter::new(frame_requester, animations_enabled),
-            queued_user_messages: QueuedUserMessages::new(),
-            composer,
-            prompt_footer_override: None,
-        }
-    }
-
-    fn set_task_running(&mut self, running: bool) {
-        self.footer.set_task_running(running);
-        self.composer.set_task_running(running);
-    }
-
-    fn set_context_window(&mut self, percent: Option<i64>, used_tokens: Option<i64>) {
-        self.footer.set_context_window(percent, used_tokens);
-    }
-
-    fn update_status_header(&mut self, header: String) {
-        self.footer.update_status(header, None);
-    }
-
-    fn set_status_header_prefix(&mut self, prefix: Option<String>) {
-        self.footer.update_status_prefix(prefix);
-    }
-
-    fn set_queued_user_messages(&mut self, queued: Vec<String>) {
-        self.queued_user_messages.messages = queued;
-    }
-
-    fn set_prompt_footer_override(&mut self, override_mode: Option<PromptFooterOverride>) {
-        self.prompt_footer_override = override_mode;
-    }
-}
-
-impl Renderable for RenderOnlyBottomPane {
-    fn render(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
-        if area.is_empty() {
-            return;
-        }
-
-        const PROMPT_FOOTER_HEIGHT: u16 = 2;
-        let width = area.width;
-        let prompt_footer_height = if area.height > PROMPT_FOOTER_HEIGHT {
-            PROMPT_FOOTER_HEIGHT
-        } else {
-            0
-        };
-        let composer_height = self
-            .composer
-            .desired_height(width)
-            .min(area.height.saturating_sub(prompt_footer_height));
-        let composer_area = ratatui::layout::Rect::new(
-            area.x,
-            area.bottom()
-                .saturating_sub(prompt_footer_height.saturating_add(composer_height)),
-            area.width,
-            composer_height,
-        );
-        self.composer.render(composer_area, buf);
-
-        if prompt_footer_height > 0 {
-            let footer_area =
-                ratatui::layout::Rect::new(area.x, composer_area.bottom(), area.width, 1);
-            render_prompt_footer(footer_area, buf, self.prompt_footer_override);
-        }
-
-        let height_above_composer = area
-            .height
-            .saturating_sub(composer_height.saturating_add(prompt_footer_height));
-        if height_above_composer == 0 {
-            return;
-        }
-
-        // Reserve one empty spacer line above the composer.
-        let top_height = height_above_composer.saturating_sub(1);
-        if top_height == 0 {
-            return;
-        }
-        let top_area = ratatui::layout::Rect::new(area.x, area.y, area.width, top_height);
-
-        let status_height = self.footer.desired_height(width).min(top_area.height);
-        let status_area =
-            ratatui::layout::Rect::new(top_area.x, top_area.y, top_area.width, status_height);
-        self.footer.render(status_area, buf);
-
-        let queue_height = top_area.height.saturating_sub(status_height);
-        if queue_height == 0 {
-            return;
-        }
-        let queue_area = ratatui::layout::Rect::new(
-            top_area.x,
-            top_area.y + status_height,
-            top_area.width,
-            queue_height,
-        );
-        self.queued_user_messages.render(queue_area, buf);
-    }
-
-    fn desired_height(&self, width: u16) -> u16 {
-        self.footer.desired_height(width)
-            + self.queued_user_messages.desired_height(width)
-            + self.composer.desired_height(width)
-            + 3
-    }
-
-    fn cursor_pos(&self, area: ratatui::layout::Rect) -> Option<(u16, u16)> {
-        const PROMPT_FOOTER_HEIGHT: u16 = 2;
-        let width = area.width;
-        let prompt_footer_height = if area.height > PROMPT_FOOTER_HEIGHT {
-            PROMPT_FOOTER_HEIGHT
-        } else {
-            0
-        };
-        let composer_height = self
-            .composer
-            .desired_height(width)
-            .min(area.height.saturating_sub(prompt_footer_height));
-        let composer_area = ratatui::layout::Rect::new(
-            area.x,
-            area.bottom()
-                .saturating_sub(prompt_footer_height.saturating_add(composer_height)),
-            area.width,
-            composer_height,
-        );
-        self.composer.cursor_pos(composer_area)
-    }
-}
-
 fn render_render_only_viewport(
     area: ratatui::layout::Rect,
     buf: &mut ratatui::buffer::Buffer,
-    bottom_pane: &RenderOnlyBottomPane,
+    bottom_pane: &BottomPane,
     transient_lines: Vec<Line<'static>>,
 ) {
     let width = area.width;
@@ -336,47 +72,6 @@ fn render_render_only_viewport(
     bottom_pane.render(pane_area, buf);
 }
 
-impl Renderable for RenderOnlyFooter {
-    fn render(&self, area: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
-        if area.is_empty() {
-            return;
-        }
-
-        let Some(status) = &self.status else {
-            return;
-        };
-
-        // Leave one blank line above and below the status indicator so it matches the legacy Codex
-        // TUI spacing (shimmer should not touch the transcript directly).
-        let available_height = area.height.saturating_sub(2);
-        if available_height == 0 {
-            return;
-        }
-
-        let height = status.desired_height(area.width).min(available_height);
-        if height == 0 {
-            return;
-        }
-
-        status.render(
-            ratatui::layout::Rect::new(area.x, area.y + 1, area.width, height),
-            buf,
-        );
-    }
-
-    fn desired_height(&self, width: u16) -> u16 {
-        self.status
-            .as_ref()
-            .map(|status| status.desired_height(width).saturating_add(2))
-            .unwrap_or(0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PromptFooterOverride {
-    ExternalEditorHint,
-}
-
 pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String>> {
     let (app_event_tx_raw, mut app_event_rx) = unbounded_channel::<AppEvent>();
     let app_event_tx = AppEventSender::new(app_event_tx_raw);
@@ -397,13 +92,14 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
         &file_search_dir,
     ));
 
-    let mut bottom_pane = RenderOnlyBottomPane::new(
-        tui.frame_requester(),
-        tui.enhanced_keys_supported(),
-        app_event_tx.clone(),
-        true,
-        "Assign new task to CodexPotter".to_string(),
-    );
+    let mut bottom_pane = BottomPane::new(BottomPaneParams {
+        frame_requester: tui.frame_requester(),
+        enhanced_keys_supported: tui.enhanced_keys_supported(),
+        app_event_tx: app_event_tx.clone(),
+        animations_enabled: true,
+        placeholder_text: "Assign new task to CodexPotter".to_string(),
+        disable_paste_burst: false,
+    });
 
     let mut tui_events = tui.event_stream();
     tui.frame_requester().schedule_frame();
@@ -417,12 +113,12 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
                 match event {
                     TuiEvent::Draw => {
                         let width = tui.terminal.last_known_screen_size.width;
-                        if bottom_pane.composer.flush_paste_burst_if_due() {
+                        if bottom_pane.composer_mut().flush_paste_burst_if_due() {
                             // A paste just flushed; request an immediate redraw and skip this frame.
                             tui.frame_requester().schedule_frame();
                             continue;
                         }
-                        if bottom_pane.composer.is_in_paste_burst() {
+                        if bottom_pane.composer().is_in_paste_burst() {
                             // While capturing a burst, schedule a follow-up tick and skip this frame
                             // to avoid redundant renders between ticks.
                             tui.frame_requester().schedule_frame_in(
@@ -457,12 +153,12 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
                             if !is_press {
                                 continue;
                             }
-                            if bottom_pane.composer.is_empty() {
+                            if bottom_pane.composer().is_empty() {
                                 // Clear the inline viewport so the shell prompt is clean on exit.
                                 tui.terminal.clear()?;
                                 return Ok(None);
                             }
-                            bottom_pane.composer.clear_for_ctrl_c();
+                            bottom_pane.composer_mut().clear_for_ctrl_c();
                             tui.frame_requester().schedule_frame();
                             continue;
                         }
@@ -474,11 +170,11 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
                             bottom_pane.set_prompt_footer_override(Some(PromptFooterOverride::ExternalEditorHint));
                             let width = tui.terminal.last_known_screen_size.width;
                             draw_prompt_bottom_pane(tui, &bottom_pane, width)?;
-                            match external_editor_integration::run_external_editor(tui, &bottom_pane.composer)
+                            match external_editor_integration::run_external_editor(tui, bottom_pane.composer())
                                 .await
                             {
                                 Ok(Some(new_text)) => {
-                                    bottom_pane.composer.apply_external_edit(new_text);
+                                    bottom_pane.composer_mut().apply_external_edit(new_text);
                                     tui.frame_requester().schedule_frame();
                                 }
                                 Ok(None) => {
@@ -506,11 +202,12 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
                             continue;
                         }
 
-                        let (result, needs_redraw) = bottom_pane.composer.handle_key_event(key_event);
+                        let (result, needs_redraw) =
+                            bottom_pane.composer_mut().handle_key_event(key_event);
                         if needs_redraw {
                             tui.frame_requester().schedule_frame();
                         }
-                        if bottom_pane.composer.is_in_paste_burst() {
+                        if bottom_pane.composer().is_in_paste_burst() {
                             tui.frame_requester().schedule_frame_in(ChatComposer::recommended_paste_flush_delay());
                         }
                         match result {
@@ -524,7 +221,7 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
                         // Many terminals convert newlines to \r when pasting (e.g., iTerm2),
                         // but tui-textarea expects \n. Normalize CR to LF.
                         let pasted = pasted.replace("\r", "\n");
-                        if bottom_pane.composer.handle_paste(pasted) {
+                        if bottom_pane.composer_mut().handle_paste(pasted) {
                             tui.frame_requester().schedule_frame();
                         }
                     }
@@ -542,14 +239,16 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
 
 fn handle_prompt_app_event(
     tui: &mut Tui,
-    bottom_pane: &mut RenderOnlyBottomPane,
+    bottom_pane: &mut BottomPane,
     file_search: &FileSearchManager,
     app_event: AppEvent,
 ) {
     match app_event {
         AppEvent::StartFileSearch(query) => file_search.on_user_query(query),
         AppEvent::FileSearchResult { query, matches } => {
-            bottom_pane.composer.on_file_search_result(query, matches);
+            bottom_pane
+                .composer_mut()
+                .on_file_search_result(query, matches);
             tui.frame_requester().schedule_frame();
         }
         AppEvent::InsertHistoryCell(cell) => {
@@ -562,7 +261,7 @@ fn handle_prompt_app_event(
 
 fn draw_prompt_bottom_pane(
     tui: &mut Tui,
-    bottom_pane: &RenderOnlyBottomPane,
+    bottom_pane: &BottomPane,
     width: u16,
 ) -> anyhow::Result<()> {
     let viewport_height = bottom_pane.desired_height(width).max(1);
@@ -588,36 +287,6 @@ fn draw_prompt_bottom_pane(
     })?;
 
     Ok(())
-}
-
-fn render_prompt_footer(
-    area: Rect,
-    buf: &mut ratatui::buffer::Buffer,
-    override_mode: Option<PromptFooterOverride>,
-) {
-    if area.is_empty() {
-        return;
-    }
-
-    let line = match override_mode {
-        Some(PromptFooterOverride::ExternalEditorHint) => ratatui::text::Line::from(vec![
-            " ".into(),
-            ratatui::text::Span::from(external_editor_integration::EXTERNAL_EDITOR_HINT).bold(),
-        ]),
-        None => ratatui::text::Line::from(vec![
-            ratatui::text::Span::from("ctrl+g "),
-            ratatui::text::Span::from("external editor").dim(),
-        ]),
-    };
-
-    // Match the legacy footer indent.
-    let mut footer_rect = area;
-    if footer_rect.width > 2 {
-        footer_rect.x += 2;
-        footer_rect.width = footer_rect.width.saturating_sub(2);
-    }
-
-    ratatui::widgets::WidgetRef::render_ref(&line, footer_rect, buf);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -681,15 +350,16 @@ pub async fn run_render_only_with_tui_options_and_queue(
         })
         .map_err(|err| anyhow::Error::msg(err.to_string()))?;
 
-    let mut bottom_pane = RenderOnlyBottomPane::new(
-        tui.frame_requester(),
-        tui.enhanced_keys_supported(),
-        app_event_tx.clone(),
-        true,
-        "Assign new task to CodexPotter".to_string(),
-    );
+    let mut bottom_pane = BottomPane::new(BottomPaneParams {
+        frame_requester: tui.frame_requester(),
+        enhanced_keys_supported: tui.enhanced_keys_supported(),
+        app_event_tx: app_event_tx.clone(),
+        animations_enabled: true,
+        placeholder_text: "Assign new task to CodexPotter".to_string(),
+        disable_paste_burst: false,
+    });
     if let Some(draft) = composer_draft.take() {
-        bottom_pane.composer.restore_draft(draft);
+        bottom_pane.composer_mut().restore_draft(draft);
     }
     let queued_user_messages_state = std::mem::take(queued_user_messages);
     let mut app = RenderAppState::new(
@@ -712,7 +382,7 @@ pub async fn run_render_only_with_tui_options_and_queue(
         )
         .await;
     *queued_user_messages = app.queued_user_messages;
-    *composer_draft = app.bottom_pane.composer.take_draft();
+    *composer_draft = app.bottom_pane.composer_mut().take_draft();
     result
 }
 
@@ -1021,7 +691,7 @@ struct RenderAppState {
     processor: RenderOnlyProcessor,
     app_event_tx: AppEventSender,
     codex_op_tx: UnboundedSender<Op>,
-    bottom_pane: RenderOnlyBottomPane,
+    bottom_pane: BottomPane,
     file_search: FileSearchManager,
     queued_user_messages: VecDeque<String>,
     reasoning_status: ReasoningStatusTracker,
@@ -1036,7 +706,7 @@ impl RenderAppState {
         processor: RenderOnlyProcessor,
         app_event_tx: AppEventSender,
         codex_op_tx: UnboundedSender<Op>,
-        bottom_pane: RenderOnlyBottomPane,
+        bottom_pane: BottomPane,
         file_search: FileSearchManager,
         queued_user_messages: VecDeque<String>,
     ) -> Self {
@@ -1074,12 +744,12 @@ impl RenderAppState {
                     };
                         match event {
                         TuiEvent::Draw => {
-                            if self.bottom_pane.composer.flush_paste_burst_if_due() {
+                            if self.bottom_pane.composer_mut().flush_paste_burst_if_due() {
                                 // A paste just flushed; request an immediate redraw and skip this frame.
                                 tui.frame_requester().schedule_frame();
                                 continue;
                             }
-                            if self.bottom_pane.composer.is_in_paste_burst() {
+                            if self.bottom_pane.composer().is_in_paste_burst() {
                                 // While capturing a burst, schedule a follow-up tick and skip this frame
                                 // to avoid redundant renders.
                                 tui.frame_requester().schedule_frame_in(crate::bottom_pane::ChatComposer::recommended_paste_flush_delay());
@@ -1123,7 +793,7 @@ impl RenderAppState {
                             // Many terminals convert newlines to \r when pasting (e.g., iTerm2),
                             // but tui-textarea expects \n. Normalize CR to LF.
                             let pasted = pasted.replace("\r", "\n");
-                            if self.bottom_pane.composer.handle_paste(pasted) {
+                            if self.bottom_pane.composer_mut().handle_paste(pasted) {
                                 tui.frame_requester().schedule_frame();
                             }
                         }
@@ -1171,11 +841,13 @@ impl RenderAppState {
             .set_prompt_footer_override(Some(PromptFooterOverride::ExternalEditorHint));
         self.draw(tui)?;
 
-        match external_editor_integration::run_external_editor(tui, &self.bottom_pane.composer)
+        match external_editor_integration::run_external_editor(tui, self.bottom_pane.composer())
             .await
         {
             Ok(Some(new_text)) => {
-                self.bottom_pane.composer.apply_external_edit(new_text);
+                self.bottom_pane
+                    .composer_mut()
+                    .apply_external_edit(new_text);
             }
             Ok(None) => {
                 self.handle_app_event(
@@ -1220,7 +892,7 @@ impl RenderAppState {
                 return;
             }
             if let Some(message) = self.queued_user_messages.pop_back() {
-                self.bottom_pane.composer.set_text_content(message);
+                self.bottom_pane.composer_mut().set_text_content(message);
                 self.refresh_queued_user_messages();
                 frame_requester.schedule_frame();
             }
@@ -1235,7 +907,7 @@ impl RenderAppState {
             if !is_press {
                 return;
             }
-            if self.bottom_pane.composer.is_empty() {
+            if self.bottom_pane.composer().is_empty() {
                 // Preserve any live output (for example pending "Explored" / "Ran" cells) in the
                 // transcript before clearing the inline viewport on exit.
                 self.processor.flush_pending_exploring_cell();
@@ -1250,17 +922,17 @@ impl RenderAppState {
                 }
                 self.exit_after_next_draw = true;
             } else {
-                self.bottom_pane.composer.clear_for_ctrl_c();
+                self.bottom_pane.composer_mut().clear_for_ctrl_c();
             }
             frame_requester.schedule_frame();
             return;
         }
 
-        let (result, needs_redraw) = self.bottom_pane.composer.handle_key_event(key_event);
+        let (result, needs_redraw) = self.bottom_pane.composer_mut().handle_key_event(key_event);
         if needs_redraw {
             frame_requester.schedule_frame();
         }
-        if self.bottom_pane.composer.is_in_paste_burst() {
+        if self.bottom_pane.composer().is_in_paste_burst() {
             frame_requester.schedule_frame_in(
                 crate::bottom_pane::ChatComposer::recommended_paste_flush_delay(),
             );
@@ -1465,7 +1137,7 @@ impl RenderAppState {
             }
             AppEvent::FileSearchResult { query, matches } => {
                 self.bottom_pane
-                    .composer
+                    .composer_mut()
                     .on_file_search_result(query, matches);
                 tui.frame_requester().schedule_frame();
             }
@@ -1678,13 +1350,14 @@ mod tests {
     fn reasoning_delta_updates_status_header_from_first_bold() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let app_event_tx = AppEventSender::new(tx_raw);
-        let mut bottom_pane = RenderOnlyBottomPane::new(
-            crate::tui::FrameRequester::test_dummy(),
-            false,
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
             app_event_tx,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-        );
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
         bottom_pane.set_task_running(true);
 
         let mut tracker = ReasoningStatusTracker::new();
@@ -1698,11 +1371,7 @@ mod tests {
         };
         bottom_pane.update_status_header(header);
 
-        let status = bottom_pane
-            .footer
-            .status
-            .as_ref()
-            .expect("status indicator");
+        let status = bottom_pane.status_indicator().expect("status indicator");
         assert_eq!(status.header(), "Inspecting for code duplication");
     }
 
@@ -1713,13 +1382,14 @@ mod tests {
 
         let processor = RenderOnlyProcessor::new(app_event_tx.clone());
         let (op_tx, _op_rx) = unbounded_channel::<Op>();
-        let bottom_pane = RenderOnlyBottomPane::new(
-            crate::tui::FrameRequester::test_dummy(),
-            false,
-            app_event_tx.clone(),
-            false,
-            "Assign new task to CodexPotter".to_string(),
-        );
+        let bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
         let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
         let mut app = RenderAppState::new(
             processor,
@@ -1752,8 +1422,8 @@ mod tests {
 
         app.update_bottom_pane_context_window();
 
-        assert_eq!(app.bottom_pane.footer.context_window_percent, Some(93));
-        assert_eq!(app.bottom_pane.footer.context_window_used_tokens, None);
+        assert_eq!(app.bottom_pane.context_window_percent(), Some(93));
+        assert_eq!(app.bottom_pane.context_window_used_tokens(), None);
         assert_eq!(app.processor.token_usage.total_tokens, 100_000);
     }
 
@@ -1764,13 +1434,14 @@ mod tests {
 
         let processor = RenderOnlyProcessor::new(app_event_tx.clone());
         let (op_tx, _op_rx) = unbounded_channel::<Op>();
-        let bottom_pane = RenderOnlyBottomPane::new(
-            crate::tui::FrameRequester::test_dummy(),
-            false,
-            app_event_tx.clone(),
-            false,
-            "Assign new task to CodexPotter".to_string(),
-        );
+        let bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
         let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
         let mut app = RenderAppState::new(
             processor,
@@ -1789,11 +1460,8 @@ mod tests {
 
         app.update_bottom_pane_context_window();
 
-        assert_eq!(app.bottom_pane.footer.context_window_percent, None);
-        assert_eq!(
-            app.bottom_pane.footer.context_window_used_tokens,
-            Some(123_456)
-        );
+        assert_eq!(app.bottom_pane.context_window_percent(), None);
+        assert_eq!(app.bottom_pane.context_window_used_tokens(), Some(123_456));
     }
 
     #[test]
@@ -1808,13 +1476,14 @@ mod tests {
 
         let processor = RenderOnlyProcessor::new(app_event_tx.clone());
         let (op_tx, _op_rx) = unbounded_channel::<Op>();
-        let bottom_pane = RenderOnlyBottomPane::new(
-            crate::tui::FrameRequester::test_dummy(),
-            false,
-            app_event_tx.clone(),
-            false,
-            "Assign new task to CodexPotter".to_string(),
-        );
+        let bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
         let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
         let mut app = RenderAppState::new(
             processor,
@@ -1826,7 +1495,7 @@ mod tests {
         );
 
         app.bottom_pane
-            .composer
+            .composer_mut()
             .set_text_content("hello".to_string());
         let area = Rect::new(0, 0, 80, 10);
         let before =
@@ -1856,13 +1525,14 @@ mod tests {
 
         let processor = RenderOnlyProcessor::new(app_event_tx.clone());
         let (op_tx, _op_rx) = unbounded_channel::<Op>();
-        let bottom_pane = RenderOnlyBottomPane::new(
-            crate::tui::FrameRequester::test_dummy(),
-            false,
-            app_event_tx.clone(),
-            false,
-            "Assign new task to CodexPotter".to_string(),
-        );
+        let bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
         let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
         let mut app = RenderAppState::new(
             processor,
@@ -1873,20 +1543,20 @@ mod tests {
             VecDeque::new(),
         );
 
-        app.bottom_pane.composer.set_disable_paste_burst(true);
+        app.bottom_pane.composer_mut().set_disable_paste_burst(true);
         for ch in "hello world".chars() {
             app.handle_key_event(
                 KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
                 crate::tui::FrameRequester::test_dummy(),
             );
         }
-        assert_eq!(app.bottom_pane.composer.current_text(), "hello world");
+        assert_eq!(app.bottom_pane.composer().current_text(), "hello world");
 
         let mut ctrl_w_repeat = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
         ctrl_w_repeat.kind = KeyEventKind::Repeat;
         app.handle_key_event(ctrl_w_repeat, crate::tui::FrameRequester::test_dummy());
 
-        assert_eq!(app.bottom_pane.composer.current_text(), "hello ");
+        assert_eq!(app.bottom_pane.composer().current_text(), "hello ");
     }
 
     #[tokio::test]
@@ -2199,15 +1869,16 @@ mod tests {
 
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let app_event_tx = AppEventSender::new(tx_raw);
-        let mut bottom_pane = RenderOnlyBottomPane::new(
-            crate::tui::FrameRequester::test_dummy(),
-            false,
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
             app_event_tx,
-            false,
-            "Assign new task to CodexPotter".to_string(),
-        );
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
         bottom_pane.set_task_running(true);
-        if let Some(status) = bottom_pane.footer.status.as_mut() {
+        if let Some(status) = bottom_pane.status_indicator_mut() {
             // Ensure the elapsed timer stays at 0s for a stable snapshot.
             status.pause_timer_at(Instant::now());
         }
@@ -2349,13 +2020,14 @@ mod tests {
         let (codex_op_tx, _codex_op_rx) = unbounded_channel::<Op>();
         let file_search_dir = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
         let file_search = FileSearchManager::new(file_search_dir, app_event_tx.clone());
-        let bottom_pane = RenderOnlyBottomPane::new(
-            crate::tui::FrameRequester::test_dummy(),
-            false,
-            app_event_tx.clone(),
-            false,
-            "Assign new task to CodexPotter".to_string(),
-        );
+        let bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
         let mut app = RenderAppState::new(
             proc,
             app_event_tx,
@@ -2638,7 +2310,7 @@ mod tests {
     fn render_prompt_footer_line(override_mode: Option<PromptFooterOverride>) -> String {
         let area = Rect::new(0, 0, 80, 1);
         let mut buf = ratatui::buffer::Buffer::empty(area);
-        render_prompt_footer(area, &mut buf, override_mode);
+        crate::bottom_pane::render_prompt_footer_for_test(area, &mut buf, override_mode);
 
         let mut out = String::new();
         for x in 0..area.width {
@@ -2667,7 +2339,7 @@ mod tests {
     fn prompt_footer_external_editor_text_is_dim() {
         let area = Rect::new(0, 0, 80, 1);
         let mut buf = ratatui::buffer::Buffer::empty(area);
-        render_prompt_footer(area, &mut buf, None);
+        crate::bottom_pane::render_prompt_footer_for_test(area, &mut buf, None);
 
         assert!(
             !buf[(2, 0)]
@@ -2689,7 +2361,7 @@ mod tests {
     fn prompt_footer_external_editor_override_hint_is_bold() {
         let area = Rect::new(0, 0, 80, 1);
         let mut buf = ratatui::buffer::Buffer::empty(area);
-        render_prompt_footer(
+        crate::bottom_pane::render_prompt_footer_for_test(
             area,
             &mut buf,
             Some(PromptFooterOverride::ExternalEditorHint),
