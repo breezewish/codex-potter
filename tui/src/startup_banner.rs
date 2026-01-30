@@ -3,6 +3,7 @@ use std::path::Path;
 use ratatui::prelude::*;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
 use crate::exec_command::relativize_to_home;
@@ -25,6 +26,27 @@ const ASCII_INDENT: &str = "  ";
 // Bold split positions (0-based, within each ASCII art line after trimming trailing spaces).
 const ASCII_BOLD_SPLIT_COLS: [usize; 9] = [52, 51, 38, 37, 37, 38, 38, 40, 41];
 
+fn take_prefix_by_width(text: &str, max_width: usize) -> &str {
+    if max_width == 0 {
+        return "";
+    }
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text;
+    }
+
+    let mut used_width = 0usize;
+    let mut end = 0usize;
+    for (idx, ch) in text.char_indices() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used_width + ch_width > max_width {
+            break;
+        }
+        used_width += ch_width;
+        end = idx + ch.len_utf8();
+    }
+    &text[..end]
+}
+
 pub fn build_startup_banner_lines(
     width: u16,
     version: &str,
@@ -33,33 +55,49 @@ pub fn build_startup_banner_lines(
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let indent_width = UnicodeWidthStr::width(ASCII_INDENT);
+    let max_width = usize::from(width);
     let banner_width = POTTER_ASCII_ART
         .iter()
         .map(|line| indent_width + UnicodeWidthStr::width(line.trim_end()))
         .max()
         .unwrap_or(indent_width)
-        .min(usize::from(width));
+        .min(max_width);
 
     for (idx, line) in POTTER_ASCII_ART.iter().enumerate() {
         let trimmed = line.trim_end();
         let split_at = ASCII_BOLD_SPLIT_COLS[idx].min(trimmed.len());
-        let (left, right) = trimmed.split_at(split_at);
+
+        let version_label = if idx == POTTER_ASCII_ART.len().saturating_sub(1) {
+            Some(take_prefix_by_width(&format!("v{version}"), banner_width).to_string())
+        } else {
+            None
+        };
+        let version_width = version_label
+            .as_deref()
+            .map(UnicodeWidthStr::width)
+            .unwrap_or(0);
+        let gap_reserve = if version_width > 0 && banner_width > version_width {
+            1
+        } else {
+            0
+        };
+        let max_prefix_width = banner_width.saturating_sub(version_width + gap_reserve);
+        let indent_visible_width = indent_width.min(max_prefix_width);
+        let remaining = max_prefix_width.saturating_sub(indent_visible_width);
+        let visible = take_prefix_by_width(trimmed, remaining);
+
+        let visible_split_at = split_at.min(visible.len());
+        let (left, right) = visible.split_at(visible_split_at);
 
         let mut spans: Vec<Span<'static>> = vec![
-            Span::from(ASCII_INDENT),
+            Span::from(ASCII_INDENT[..indent_visible_width].to_string()),
             Span::from(left.to_string()),
             Span::styled(right.to_string(), Style::default().bold()),
         ];
 
-        if idx == POTTER_ASCII_ART.len().saturating_sub(1) {
-            let version_label = format!("v{version}");
-            let base_width = indent_width + UnicodeWidthStr::width(trimmed);
-            let version_width = UnicodeWidthStr::width(version_label.as_str());
-            let gap = if base_width + 1 + version_width <= banner_width {
-                banner_width.saturating_sub(base_width + version_width)
-            } else {
-                1
-            };
+        if let Some(version_label) = version_label {
+            let prefix_width = indent_visible_width + UnicodeWidthStr::width(visible);
+            let gap = banner_width.saturating_sub(prefix_width + version_width);
             spans.push(Span::from(" ".repeat(gap)));
             spans.push(Span::from(version_label).dim());
         }
@@ -122,6 +160,7 @@ fn format_directory(directory: &Path, max_width: Option<usize>) -> String {
 mod tests {
     use super::*;
     use insta::assert_snapshot;
+    use pretty_assertions::assert_eq;
 
     fn to_plain_text(lines: &[Line<'static>]) -> String {
         let mut out = String::new();
@@ -182,5 +221,31 @@ mod tests {
         assert_eq!(model_span.content.as_ref(), "gpt-5.2 xhigh");
         assert_eq!(model_span.style.fg, Some(orange_color()));
         assert!(model_span.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn startup_banner_truncates_ascii_art_without_wrapping_and_keeps_version_visible() {
+        let dir = Path::new("/Users/example/repo");
+        let width: u16 = 30;
+        let lines = build_startup_banner_lines(width, "0.0.1", "", dir);
+
+        for (idx, line) in lines.iter().enumerate() {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                UnicodeWidthStr::width(text.as_str()) <= usize::from(width),
+                "line {idx} must fit within {width} cols: {text:?}",
+            );
+        }
+
+        let version_line = &lines[POTTER_ASCII_ART.len() - 1];
+        let text: String = version_line
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            text.ends_with("v0.0.1"),
+            "version line must end with version label: {text:?}",
+        );
     }
 }
