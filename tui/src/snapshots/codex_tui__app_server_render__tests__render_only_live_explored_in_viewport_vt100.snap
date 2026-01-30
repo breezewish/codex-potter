@@ -12,7 +12,7 @@ expression: terminal.backend().vt100().screen().contents()
     Read README.md, MAIN.md
     Search KeyCode::Tab|\\bTab\\b in cli
 
-• Working (0s) · 100% context left
+• Working (0s • esc to interrupt) · 100% context left
 
 
 
