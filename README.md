@@ -1,32 +1,45 @@
 ![codex-potter](./etc/banner.svg)
 
+<p align="center"><strong>CodexPotter</strong> continuously <strong>reconciles</strong> codebase toward your instructed state</p>
+
+<p align="center"><em>(the <a href="https://ghuntley.com/ralph/">Ralph Wiggum</a> pattern)</em></p>
+
 ## 💡 Why CodexPotter
 
-CodexPotter CLI takes your instructions and continuously **reconciles** the codebase toward your desired state (the [Ralph Wiggum](https://ghuntley.com/ralph/) pattern).
+- 🤖 **Codex-first** — Codex subscription is all you need; no extra LLM needed.
 
-- 🤖 **Codex-first** — Codex subscription is all you need; no extra LLM needed; Local skills just works™
+- 🚀 **Never worse than Codex** — Drive Codex, nothing more; no business prompts which may not suit you.
 
-- 🚀 **Never worse than Codex** — Only drives Codex, nothing more; no business prompts which may not suit your project.
+- 🧩 **Seamless integration** — AGENTS.md and skills just work™ ; utilize local skills to plan, review, etc.
 
-- 🧠 **File system as memory** — Stores your instructions in files to resist compaction and preserve all details.
+- 🪶 **Tiny footprint** — Only use [<1k tokens](./cli/prompts/developer_prompt.md), ensuring LLM context fully serves your business logic.
 
-- 📚 **Built-in knowledge base** - Keeps a local KB as an index / cache so that Codex learns project faster in clean contexts.
+- 🧠 **File system as memory** — Store instructions in files to resist compaction and preserve all details.
 
-## ⚡️ Getting Started
+- 📚 **Built-in knowledge base** — Keep a local KB as index so Codex learns project fast in clean contexts.
+
+## ⚡️ Getting started
 
 ```sh
 cargo build
 ```
 
-Then, run codex-potter CLI (available in `target/debug/codex-potter`) in your project directory:
+Then, run CodexPotter CLI (available in `target/debug/codex-potter`) in your project directory, just like `codex`:
 
 ```sh
 codex-potter --yolo
 ```
 
-Your prompt will become a task assigned to CodexPotter, and CodexPotter will help you run ralph loop to complete it.
-
 ⚠️ **Note:** Unlike codex, follow up prompts will become a **new** task assigned to CodexPotter, **without sharing contexts**.
+
+## Roadmap
+
+- [ ] Skill popup
+- [ ] Resume / project management
+- [ ] Better sandbox support
+- [ ] Interoperability with codex CLI sessions (for follow-up prompts)
+- [ ] Allow opting out knowledge base
+- [ ] Recommended skills for PRD and code review
 
 ## Development
 
