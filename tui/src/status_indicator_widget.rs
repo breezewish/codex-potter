@@ -145,6 +145,11 @@ impl StatusIndicatorWidget {
         self.elapsed_duration_at(now).as_secs()
     }
 
+    /// Returns the elapsed time shown in the status indicator, in seconds.
+    pub fn elapsed_seconds(&self) -> u64 {
+        self.elapsed_duration_at(Instant::now()).as_secs()
+    }
+
     /// Wrap the details text into a fixed width and return the lines, truncating if necessary.
     fn wrapped_details_lines(&self, width: u16) -> Vec<Line<'static>> {
         let Some(details) = self.details.as_deref() else {

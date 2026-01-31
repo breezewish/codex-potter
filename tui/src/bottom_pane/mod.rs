@@ -197,8 +197,7 @@ impl BottomPane {
         self.frame_requester.schedule_frame();
     }
 
-    #[cfg(test)]
-    pub fn status_indicator(&self) -> Option<&StatusIndicatorWidget> {
+    pub fn status_widget(&self) -> Option<&StatusIndicatorWidget> {
         self.status.as_ref()
     }
 

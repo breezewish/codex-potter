@@ -433,6 +433,10 @@ struct RenderOnlyProcessor {
     thread_id: Option<codex_protocol::ThreadId>,
     cwd: PathBuf,
     saw_agent_delta: bool,
+    needs_final_message_separator: bool,
+    had_work_activity: bool,
+    last_separator_elapsed_secs: Option<u64>,
+    current_elapsed_secs: Option<u64>,
     pending_exploring_cell: Option<ExecCell>,
     pending_success_ran_cell: Option<ExecCell>,
 }
@@ -448,6 +452,10 @@ impl RenderOnlyProcessor {
             thread_id: None,
             cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             saw_agent_delta: false,
+            needs_final_message_separator: false,
+            had_work_activity: false,
+            last_separator_elapsed_secs: None,
+            current_elapsed_secs: None,
             pending_exploring_cell: None,
             pending_success_ran_cell: None,
         }
@@ -469,6 +477,33 @@ impl RenderOnlyProcessor {
         }
     }
 
+    fn worked_elapsed_from(&mut self, current_elapsed: u64) -> u64 {
+        let baseline = match self.last_separator_elapsed_secs {
+            Some(last) if current_elapsed < last => 0,
+            Some(last) => last,
+            None => 0,
+        };
+        let elapsed = current_elapsed.saturating_sub(baseline);
+        self.last_separator_elapsed_secs = Some(current_elapsed);
+        elapsed
+    }
+
+    fn maybe_emit_final_message_separator(&mut self) {
+        if self.needs_final_message_separator && self.had_work_activity {
+            let elapsed_seconds = self
+                .current_elapsed_secs
+                .map(|current| self.worked_elapsed_from(current));
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                history_cell::FinalMessageSeparator::new(elapsed_seconds),
+            )));
+            self.needs_final_message_separator = false;
+            self.had_work_activity = false;
+        } else if self.needs_final_message_separator {
+            // Reset the flag even if we don't show separator (no work was done)
+            self.needs_final_message_separator = false;
+        }
+    }
+
     fn handle_codex_event(&mut self, event: Event) {
         match event.msg {
             EventMsg::SessionConfigured(cfg) => {
@@ -485,6 +520,7 @@ impl RenderOnlyProcessor {
                 if let Some(message) = user_message.filter(|message| !message.is_empty()) {
                     self.emit_user_prompt(message);
                 }
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     crate::history_cell_potter::new_potter_project_hint(user_prompt_file),
                 )));
@@ -492,6 +528,7 @@ impl RenderOnlyProcessor {
             EventMsg::PotterRoundStarted { current, total } => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     crate::history_cell_potter::new_potter_round_started(current, total),
                 )));
@@ -512,6 +549,9 @@ impl RenderOnlyProcessor {
             EventMsg::AgentMessageDelta(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                if !self.saw_agent_delta {
+                    self.maybe_emit_final_message_separator();
+                }
                 self.saw_agent_delta = true;
                 if self.stream.push(&ev.delta) {
                     self.app_event_tx.send(AppEvent::StartCommitAnimation);
@@ -523,6 +563,7 @@ impl RenderOnlyProcessor {
                 if self.saw_agent_delta {
                     return;
                 }
+                self.maybe_emit_final_message_separator();
                 self.emit_agent_message(&ev.message);
             }
             EventMsg::TurnComplete(ev) => {
@@ -534,6 +575,7 @@ impl RenderOnlyProcessor {
                 } else if !self.saw_agent_delta
                     && let Some(last) = ev.last_agent_message
                 {
+                    self.maybe_emit_final_message_separator();
                     self.emit_agent_message(&last);
                 }
                 self.app_event_tx.send(AppEvent::StopCommitAnimation);
@@ -549,6 +591,7 @@ impl RenderOnlyProcessor {
             EventMsg::Warning(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_warning_event(ev.message),
                 )));
@@ -561,6 +604,7 @@ impl RenderOnlyProcessor {
             EventMsg::DeprecationNotice(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_deprecation_notice(ev.summary, ev.details),
                 )));
@@ -568,6 +612,7 @@ impl RenderOnlyProcessor {
             EventMsg::PlanUpdate(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_plan_update(ev),
                 )));
@@ -575,13 +620,16 @@ impl RenderOnlyProcessor {
             EventMsg::WebSearchEnd(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_web_search_call(ev.query),
                 )));
+                self.had_work_activity = true;
             }
             EventMsg::ViewImageToolCall(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_view_image_tool_call(ev.path, &self.cwd),
                 )));
@@ -628,13 +676,16 @@ impl RenderOnlyProcessor {
                 } else {
                     self.flush_pending_exploring_cell();
                     self.flush_pending_success_ran_cell();
+                    self.needs_final_message_separator = true;
                     self.app_event_tx
                         .send(AppEvent::InsertHistoryCell(Box::new(cell)));
                 }
+                self.had_work_activity = true;
             }
             EventMsg::PatchApplyEnd(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 if ev.success {
                     self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                         history_cell::new_patch_event(ev.changes, &self.cwd),
@@ -644,10 +695,12 @@ impl RenderOnlyProcessor {
                         history_cell::new_patch_apply_failure(ev.stderr),
                     )));
                 }
+                self.had_work_activity = true;
             }
             EventMsg::Error(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
+                self.needs_final_message_separator = true;
                 self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                     history_cell::new_error_event(ev.message),
                 )));
@@ -660,6 +713,7 @@ impl RenderOnlyProcessor {
         let Some(cell) = self.pending_exploring_cell.take() else {
             return;
         };
+        self.needs_final_message_separator = true;
         self.app_event_tx
             .send(AppEvent::InsertHistoryCell(Box::new(cell)));
     }
@@ -668,6 +722,7 @@ impl RenderOnlyProcessor {
         let Some(cell) = self.pending_success_ran_cell.take() else {
             return;
         };
+        self.needs_final_message_separator = true;
         self.app_event_tx
             .send(AppEvent::InsertHistoryCell(Box::new(cell)));
     }
@@ -1160,6 +1215,10 @@ impl RenderAppState {
                     _ => {}
                 }
 
+                self.processor.current_elapsed_secs = self
+                    .bottom_pane
+                    .status_widget()
+                    .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
                 self.processor.handle_codex_event(event);
                 if should_update_context {
                     self.update_bottom_pane_context_window();
@@ -1425,7 +1484,7 @@ mod tests {
         };
         bottom_pane.update_status_header(header);
 
-        let status = bottom_pane.status_indicator().expect("status indicator");
+        let status = bottom_pane.status_widget().expect("status indicator");
         assert_eq!(status.header(), "Inspecting for code duplication");
     }
 
@@ -2177,7 +2236,7 @@ mod tests {
     #[tokio::test]
     async fn render_only_coalesces_explored_cells() {
         let (mut proc, mut rx) = make_render_only_processor("test prompt");
-        let _ = drain_history_cell_strings(&mut rx, u16::MAX);
+        let _ = drain_history_cell_strings(&mut rx, 80);
 
         let base = ExecCommandEndEvent {
             call_id: "unused".into(),
@@ -2263,9 +2322,9 @@ mod tests {
             }),
         });
 
-        let events = drain_history_cell_strings(&mut rx, u16::MAX);
-        let [explored, _agent_message] = events.as_slice() else {
-            panic!("expected explored cell followed by agent message");
+        let events = drain_history_cell_strings(&mut rx, 80);
+        let [explored, _separator, _agent_message] = events.as_slice() else {
+            panic!("expected explored cell, separator, then agent message");
         };
         let rendered = explored.join("\n") + "\n";
         assert_snapshot!("render_only_coalesces_explored_cells", rendered);
