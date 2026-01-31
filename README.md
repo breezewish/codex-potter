@@ -1,7 +1,12 @@
-![codex-potter](./etc/banner.svg)
+<p align="center">
+  <img src="./etc/banner.svg" alt="CodexPotter banner" />
+</p>
+
+<p align="center">
+  <img src="./etc/screenshot.png" alt="CodexPotter screenshot" width="80%" />
+</p>
 
 <p align="center"><strong>CodexPotter</strong> continuously <strong>reconciles</strong> codebase toward your instructed state</p>
-
 <p align="center"><em>(the <a href="https://ghuntley.com/ralph/">Ralph Wiggum</a> pattern)</em></p>
 
 ## 💡 Why CodexPotter
@@ -17,10 +22,6 @@
 - 🧠 **File system as memory** — Store instructions in files to resist compaction and preserve all details.
 
 - 📚 **Built-in knowledge base** — Keep a local KB as index so Codex learns project fast in clean contexts.
-
-<p align="center">
-  <img src="./etc/screenshot.png" alt="CodexPotter screenshot" width="80%" />
-</p>
 
 ## ⚡️ Getting started
 
