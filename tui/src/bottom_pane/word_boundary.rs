@@ -87,7 +87,13 @@ fn segments(text: &str) -> Vec<Segment> {
             continue;
         }
 
-        push_run(text, &segmenter, run_start..idx, run_is_whitespace, &mut segments);
+        push_run(
+            text,
+            &segmenter,
+            run_start..idx,
+            run_is_whitespace,
+            &mut segments,
+        );
         run_start = idx;
         run_is_whitespace = is_whitespace;
     }

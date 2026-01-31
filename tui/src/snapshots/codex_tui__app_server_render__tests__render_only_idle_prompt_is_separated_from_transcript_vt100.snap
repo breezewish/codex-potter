@@ -1,0 +1,12 @@
+---
+source: tui/src/app_server_render.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+─ Worked for 4m 59s ──────────────────────────────────────────────────────
+
+• ok
+
+
+› Assign new task to CodexPotter
+
+  ctrl+g external editor
