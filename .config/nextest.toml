@@ -1,0 +1,7 @@
+[profile.ci]
+# Retry failing tests up to 3 times to reduce CI flakes.
+retries = 3
+
+# Run all tests to provide a full failure report in CI.
+fail-fast = false
+

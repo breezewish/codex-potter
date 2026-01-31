@@ -31,7 +31,7 @@ jobs:
           - name: Clippy
             command: cargo clippy --workspace --all-targets --locked -- -D warnings
           - name: Tests
-            command: cargo test --workspace --locked --profile ci-test
+            command: cargo nextest run --workspace --locked --cargo-profile ci-test -P ci
           - name: Build
             command: cargo build --workspace --all-targets --locked
     steps:
@@ -59,6 +59,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+
+      - name: Install cargo-nextest
+        if: matrix.check.name == 'Tests'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
 
       - name: ${{ matrix.check.command }}
         run: ${{ matrix.check.command }}
