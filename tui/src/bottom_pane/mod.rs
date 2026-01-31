@@ -16,6 +16,7 @@ mod scroll_state;
 mod selection_popup_common;
 mod skill_popup;
 mod textarea;
+mod word_boundary;
 
 pub use chat_composer::ChatComposer;
 pub use chat_composer::ChatComposerDraft;

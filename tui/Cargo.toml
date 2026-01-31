@@ -25,6 +25,7 @@ derive_more = { workspace = true, features = ["is_variant"] }
 diffy = { workspace = true }
 dirs = { workspace = true }
 itertools = { workspace = true }
+icu_segmenter = { workspace = true }
 pathdiff = { workspace = true }
 pulldown-cmark = { workspace = true }
 ratatui = { workspace = true, features = [

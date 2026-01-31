@@ -32,6 +32,7 @@ dirs = "6"
 icu_decimal = "2.1"
 icu_locale_core = "2.1"
 icu_provider = { version = "2.1", features = ["sync"] }
+icu_segmenter = { version = "2.1", features = ["compiled_data"] }
 ignore = "0.4.23"
 image = { version = "^0.25.9", default-features = false }
 insta = "1.46.0"

@@ -1,3 +1,4 @@
+use super::word_boundary;
 use crate::key_hint::is_altgr;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement as UserTextElement;
@@ -16,12 +17,6 @@ use std::ops::Range;
 use textwrap::Options;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
-
-const WORD_SEPARATORS: &str = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
-
-fn is_word_separator(ch: char) -> bool {
-    WORD_SEPARATORS.contains(ch)
-}
 
 #[derive(Debug, Clone)]
 struct TextElement {
@@ -1014,44 +1009,12 @@ impl TextArea {
     }
 
     fn beginning_of_previous_word(&self) -> usize {
-        let prefix = &self.text[..self.cursor_pos];
-        let Some((first_non_ws_idx, ch)) = prefix
-            .char_indices()
-            .rev()
-            .find(|&(_, ch)| !ch.is_whitespace())
-        else {
-            return 0;
-        };
-        let is_separator = is_word_separator(ch);
-        let mut start = first_non_ws_idx;
-        for (idx, ch) in prefix[..first_non_ws_idx].char_indices().rev() {
-            if ch.is_whitespace() || is_word_separator(ch) != is_separator {
-                start = idx + ch.len_utf8();
-                break;
-            }
-            start = idx;
-        }
+        let start = word_boundary::beginning_of_previous_word(&self.text, self.cursor_pos);
         self.adjust_pos_out_of_elements(start, true)
     }
 
     fn end_of_next_word(&self) -> usize {
-        let Some(first_non_ws) = self.text[self.cursor_pos..].find(|c: char| !c.is_whitespace())
-        else {
-            return self.text.len();
-        };
-        let word_start = self.cursor_pos + first_non_ws;
-        let mut iter = self.text[word_start..].char_indices();
-        let Some((_, first_ch)) = iter.next() else {
-            return word_start;
-        };
-        let is_separator = is_word_separator(first_ch);
-        let mut end = self.text.len();
-        for (idx, ch) in iter {
-            if ch.is_whitespace() || is_word_separator(ch) != is_separator {
-                end = word_start + idx;
-                break;
-            }
-        }
+        let end = word_boundary::end_of_next_word(&self.text, self.cursor_pos);
         self.adjust_pos_out_of_elements(end, false)
     }
 
@@ -1797,6 +1760,41 @@ mod tests {
         // If at end, end_of_next_word returns len
         t.set_cursor(t.text().len());
         assert_eq!(t.end_of_next_word(), t.text().len());
+    }
+
+    #[test]
+    fn word_navigation_helpers_multilingual_and_separators() {
+        // Chinese should move by word, not jump to the beginning in one step.
+        let mut t = ta_with("你好世界");
+        t.set_cursor(t.text().len());
+        assert_eq!(t.beginning_of_previous_word(), "你好".len());
+        t.set_cursor(0);
+        assert_eq!(t.end_of_next_word(), "你好".len());
+
+        // Full-width punctuation should form its own boundary.
+        let mut t = ta_with("你好，世界");
+        let world_start = "你好，".len();
+        t.set_cursor(t.text().len());
+        assert_eq!(t.beginning_of_previous_word(), world_start);
+        t.set_cursor("你好".len());
+        assert_eq!(t.end_of_next_word(), "你好，".len());
+
+        // Engineering separators should remain stable.
+        let mut t = ta_with("foo.bar");
+        let bar_start = t.text().find("bar").unwrap();
+        let dot = t.text().find('.').unwrap();
+        t.set_cursor(t.text().len());
+        assert_eq!(t.beginning_of_previous_word(), bar_start);
+        t.set_cursor(bar_start);
+        assert_eq!(t.beginning_of_previous_word(), dot);
+
+        // Emoji should not panic and should be navigable as a unit.
+        let mut t = ta_with("a😀b");
+        let b_start = t.text().len() - "b".len();
+        t.set_cursor(t.text().len());
+        assert_eq!(t.beginning_of_previous_word(), b_start);
+        t.set_cursor(b_start);
+        assert_eq!(t.beginning_of_previous_word(), "a".len());
     }
 
     #[test]
