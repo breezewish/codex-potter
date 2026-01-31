@@ -2,3 +2,5 @@
 /.codex/
 /.codexpotter/
 AGENTS.override.md
+node_modules/
+dist/

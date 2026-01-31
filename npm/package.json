@@ -1,0 +1,23 @@
+{
+  "name": "codex-potter",
+  "version": "0.0.0-dev",
+  "license": "Apache-2.0",
+  "bin": {
+    "codex-potter": "bin/codex-potter.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "bin",
+    "vendor",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/breezewish/codex-potter.git",
+    "directory": "npm"
+  }
+}
+
