@@ -1,0 +1,13 @@
+---
+source: tui/src/app_server_render.rs
+assertion_line: 1902
+expression: terminal.backend().vt100().screen().contents()
+---
+• CodexPotter: iteration round 1/10
+
+• Round 1/10 · Working (0s) · 100% context left
+
+
+› Assign new task to CodexPotter
+
+  ctrl+g external editor

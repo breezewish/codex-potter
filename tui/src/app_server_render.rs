@@ -890,7 +890,13 @@ impl RenderAppState {
         // When the bottom pane shrinks (e.g., after a turn completes and the status indicator is
         // removed), the prompt background can end up directly adjacent to the last transcript
         // line. Keep a blank line between the transcript and the bottom pane for readability.
-        if transient_lines.is_empty() && self.has_emitted_history_lines {
+        //
+        // While a task is running, the status indicator already renders with padding that
+        // separates it from the transcript; avoid adding redundant whitespace in that case.
+        if transient_lines.is_empty()
+            && self.has_emitted_history_lines
+            && self.bottom_pane.status_widget().is_none()
+        {
             transient_lines.push(Line::from(""));
         }
 
@@ -1816,6 +1822,85 @@ mod tests {
 
         assert_snapshot!(
             "render_only_idle_prompt_is_separated_from_transcript_vt100",
+            terminal.backend().vt100().screen().contents()
+        );
+    }
+
+    #[test]
+    fn render_only_round_banner_does_not_add_extra_padding_before_status_vt100() {
+        let width: u16 = 80;
+
+        let (tx_raw, _rx_app) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+
+        let processor = RenderOnlyProcessor::new(app_event_tx.clone());
+        let (op_tx, _op_rx) = unbounded_channel::<Op>();
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
+        bottom_pane.set_task_running(true);
+        bottom_pane.set_status_header_prefix(Some("Round 1/10".to_string()));
+        if let Some(status) = bottom_pane.status_indicator_mut() {
+            // Ensure the elapsed timer stays at 0s for a stable snapshot.
+            status.pause_timer_at(Instant::now());
+        }
+        let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
+        let mut app = RenderAppState::new(
+            processor,
+            app_event_tx,
+            op_tx,
+            bottom_pane,
+            crate::prompt_history_store::PromptHistoryStore::new(),
+            file_search,
+            VecDeque::new(),
+        );
+        app.has_emitted_history_lines = true;
+
+        let transient_lines = app.build_transient_lines(width);
+
+        let pane_height = app.bottom_pane.desired_height(width).max(1);
+        let transient_height = u16::try_from(transient_lines.len()).unwrap_or(u16::MAX);
+        let viewport_height = pane_height.saturating_add(transient_height);
+
+        let history_lines =
+            crate::history_cell_potter::new_potter_round_started(1, 10).display_lines(width);
+        let history_height = u16::try_from(history_lines.len()).unwrap_or(u16::MAX);
+        let height = history_height.saturating_add(viewport_height).max(1);
+
+        let backend = VT100Backend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).expect("create terminal");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                ratatui::widgets::Clear.render(area, frame.buffer_mut());
+
+                let history_height = history_height.min(area.height);
+                let history_area = Rect::new(area.x, area.y, area.width, history_height);
+                let viewport_area = Rect::new(
+                    area.x,
+                    area.y + history_height,
+                    area.width,
+                    area.height.saturating_sub(history_height),
+                );
+
+                ratatui::widgets::Paragraph::new(ratatui::text::Text::from(history_lines))
+                    .render(history_area, frame.buffer_mut());
+                render_render_only_viewport(
+                    viewport_area,
+                    frame.buffer_mut(),
+                    &app.bottom_pane,
+                    transient_lines,
+                );
+            })
+            .expect("draw");
+
+        assert_snapshot!(
+            "render_only_round_banner_padding_before_status_vt100",
             terminal.backend().vt100().screen().contents()
         );
     }
