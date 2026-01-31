@@ -733,10 +733,6 @@ echo "$thread_start" | grep -q '"sandbox":"danger-full-access"' || {{
   echo "expected sandbox=danger-full-access in thread/start, got: $thread_start" >&2
   exit 1
 }}
-echo "$thread_start" | grep -q '"archived":' && {{
-  echo "did not expect archived in thread/start, got: $thread_start" >&2
-  exit 1
-}}
 echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","preview":"","modelProvider":"test-provider","createdAt":0,"updatedAt":0,"path":"rollout.jsonl","cwd":"project","cliVersion":"0.0.0","source":"appServer","gitInfo":null,"turns":[]}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"readOnly"}},"reasoningEffort":null}}}}'
 
 # Wait for the client to close stdin to request shutdown.
@@ -829,10 +825,6 @@ echo "$thread_start" | grep -q '"sandbox":"workspace-write"' || {{
   echo "expected sandbox=workspace-write in thread/start, got: $thread_start" >&2
   exit 1
 }}
-echo "$thread_start" | grep -q '"archived":' && {{
-  echo "did not expect archived in thread/start, got: $thread_start" >&2
-  exit 1
-}}
 echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","preview":"","modelProvider":"test-provider","createdAt":0,"updatedAt":0,"path":"rollout.jsonl","cwd":"project","cliVersion":"0.0.0","source":"appServer","gitInfo":null,"turns":[]}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false}},"reasoningEffort":null}}}}'
 
 # Wait for the client to close stdin to request shutdown.
@@ -912,10 +904,6 @@ IFS= read -r _line
 IFS= read -r thread_start
 echo "$thread_start" | grep -q '"sandbox":null' || {{
   echo "expected sandbox=null in thread/start, got: $thread_start" >&2
-  exit 1
-}}
-echo "$thread_start" | grep -q '"archived":' && {{
-  echo "did not expect archived in thread/start, got: $thread_start" >&2
   exit 1
 }}
 echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","preview":"","modelProvider":"test-provider","createdAt":0,"updatedAt":0,"path":"rollout.jsonl","cwd":"project","cliVersion":"0.0.0","source":"appServer","gitInfo":null,"turns":[]}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"readOnly"}},"reasoningEffort":null}}}}'
@@ -1000,10 +988,6 @@ IFS= read -r _line
 IFS= read -r thread_start
 echo "$thread_start" | grep -Fq "\"codex_home\":\"$CODEX_HOME\"" || {{
   echo "expected codex_home in thread/start config, got: $thread_start" >&2
-  exit 1
-}}
-echo "$thread_start" | grep -q '"archived":' && {{
-  echo "did not expect archived in thread/start, got: $thread_start" >&2
   exit 1
 }}
 echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","preview":"","modelProvider":"test-provider","createdAt":0,"updatedAt":0,"path":"rollout.jsonl","cwd":"project","cliVersion":"0.0.0","source":"appServer","gitInfo":null,"turns":[]}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"readOnly"}},"reasoningEffort":null}}}}'

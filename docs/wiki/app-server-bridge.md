@@ -82,7 +82,6 @@ Entry point: `thread_start(...)`.
 Key behavior:
 
 - Always requests `approvalPolicy: "never"` for the thread.
-- Does not send the deprecated `archived` flag.
 - Optionally requests a sandbox mode (`sandbox`) derived from CLI flags.
 - Injects the developer prompt as `developerInstructions`.
 - Optionally sets `config["codex_home"]` (the "codex-compat" home maintained by

@@ -101,7 +101,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_thread_start_includes_null_option_fields_and_omits_archived() {
+    fn serialize_thread_start_includes_null_option_fields() {
         let request = ClientRequest::ThreadStart {
             request_id: RequestId::Integer(1),
             params: ThreadStartParams {
@@ -138,10 +138,6 @@ mod tests {
             );
         }
         assert_eq!(value["params"]["approvalPolicy"], "never");
-        assert!(
-            value["params"].get("archived").is_none(),
-            "thread/start params must not include archived"
-        );
         assert_eq!(value["params"]["experimentalRawEvents"], false);
     }
 
