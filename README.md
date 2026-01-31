@@ -25,6 +25,26 @@
 
 ## ⚡️ Getting started
 
+### Install (recommended)
+
+```sh
+npm install -g codex-potter
+```
+
+Then run:
+
+```sh
+codex-potter --yolo
+```
+
+Supported platforms (via prebuilt native binaries):
+
+- macOS: Apple Silicon + Intel
+- Linux: x86_64 + aarch64
+- Windows: x86_64
+
+### Build from source
+
 ```sh
 cargo build
 ```
