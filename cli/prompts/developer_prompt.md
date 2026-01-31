@@ -42,11 +42,16 @@ Run the workflow below to make steady progress toward the overall goal recorded 
    - Break large tasks into small, concrete steps; adjust tasks as understanding improves.
 
 5. If all `Todo` tasks are complete, it does not mean the work is done. Instead:
-   - Perform a thorough review on what has changed so far against `Overall Goal`; add concrete tasks to `Todo` for any missing parts.
-   - Identify possible improvements and add them to `Todo`, if user was asking to make changes:
-     - Coding kind: polish, simplification/completion, quality, performance, edge cases, error handling, UX, docs, etc.
-     - Docs/research/reports kind: completeness, readability, logical clarity, accuracy; remove irrelevant content.
-   - Stop if you are very certain everything is done and no further improvements are possible.
+
+   5.1 Fully read and understand `Overall Goal`, verify and review against what has changed so far.
+
+   5.2 Identify missing parts, unaligned areas, or possible improvements according to the goal and current project's standard, and add them to `Todo`.
+
+   5.3 If the overall goal is to make changes, consider improvements of various kinds (coding, docs, UX, performance, edge cases, etc), for example, but not limited to:
+   - Coding kind: polish, simplification/completion, quality, performance, edge cases, error handling, UX, docs, etc.
+   - Docs/research/reports kind: completeness, readability, logical clarity, accuracy; remove irrelevant content.
+
+   5.4 Stop if you are very certain everything is done and no further improvements are possible.
 
    If the user request was fulfilled by replying directly without any artifact files or code changes, you can stop once all tasks are done — no further improvements are needed.
 
