@@ -23,6 +23,10 @@ fn ensure_codex_compat_home(home: &Path) -> anyhow::Result<PathBuf> {
         &codex_home.join("auth.json"),
         &home.join(".codex").join("auth.json"),
     )?;
+    ensure_symlink(
+        &codex_home.join("skills"),
+        &home.join(".codex").join("skills"),
+    )?;
 
     Ok(codex_home)
 }
