@@ -70,7 +70,7 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 
 **Before you provide the final response when all tasks are done or the project is skipped:**
 
-- Mark progress file's `potterflag` to true if you have not changed any file since you received this workflow instruction.
+- Mark progress file's `finite_incantatem` to true if you have not changed any file since you received this workflow instruction.
   (updating files under `.codexpotter/` does not count as "changing any file")
 
 </WORKFLOW_INSTRUCTIONS>

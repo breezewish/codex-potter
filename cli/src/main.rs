@@ -197,8 +197,11 @@ async fn main() -> anyhow::Result<()> {
             backend
                 .await
                 .context("app-server render backend panicked")??;
-            if crate::project::progress_file_has_potterflag_true(&workdir, &init.progress_file_rel)
-                .context("check progress file potterflag")?
+            if crate::project::progress_file_has_finite_incantatem_true(
+                &workdir,
+                &init.progress_file_rel,
+            )
+            .context("check progress file finite_incantatem")?
             {
                 break;
             }

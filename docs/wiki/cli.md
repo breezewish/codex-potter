@@ -28,7 +28,7 @@ This is developer-facing documentation. Start at `README.md` for the full code w
    - starts a fresh `codex app-server` (one app-server thread + one `turn/start`)
    - injects a fixed developer prompt pointing at the progress file
    - submits a fixed prompt: `Continue working according to the WORKFLOW_INSTRUCTIONS`
-5. Stops early for the current project if the progress file front matter contains `potterflag: true`
+5. Stops early for the current project if the progress file front matter contains `finite_incantatem: true`
    (checked after each round; queued projects continue normally).
 
 ## CLI interface

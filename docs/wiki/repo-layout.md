@@ -31,7 +31,7 @@ At a high level, the "control plane" is in `cli/`, while the "rendering plane" i
      - sends `Op::UserInput` to start the turn,
      - consumes `EventMsg` notifications and renders them as `HistoryCell`s,
      - allows the user to queue additional prompts (stored inside `CodexPotterTui`).
-5. After each round the CLI checks `potterflag` in the progress file and decides whether to stop
+5. After each round the CLI checks `finite_incantatem` in the progress file and decides whether to stop
    the current session (`cli/src/project.rs`).
 6. After the session ends, queued prompts become new sessions (new `.codexpotter/projects/...`
    directories) rather than continuing the same conversation context.

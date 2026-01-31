@@ -67,14 +67,14 @@ pub fn fixed_prompt() -> &'static str {
     PROMPT_TEMPLATE
 }
 
-pub fn progress_file_has_potterflag_true(
+pub fn progress_file_has_finite_incantatem_true(
     workdir: &Path,
     progress_file_rel: &Path,
 ) -> anyhow::Result<bool> {
     let progress_file = workdir.join(progress_file_rel);
     let contents = std::fs::read_to_string(&progress_file)
         .with_context(|| format!("read {}", progress_file.display()))?;
-    Ok(front_matter_bool(&contents, "potterflag").unwrap_or(false))
+    Ok(front_matter_bool(&contents, "finite_incantatem").unwrap_or(false))
 }
 
 fn create_next_project_dir(projects_root: &Path, date: &str) -> anyhow::Result<(PathBuf, PathBuf)> {
@@ -305,14 +305,14 @@ mod tests {
     }
 
     #[test]
-    fn progress_file_has_potterflag_true_reads_front_matter() {
+    fn progress_file_has_finite_incantatem_true_reads_front_matter() {
         let temp = tempfile::tempdir().expect("tempdir");
         let progress = temp.path().join("MAIN.md");
         std::fs::write(
             &progress,
             r#"---
 status: open
-potterflag: true
+finite_incantatem: true
 ---
 
 # Overall Goal
@@ -322,12 +322,12 @@ potterflag: true
 
         let rel = PathBuf::from("MAIN.md");
         let flagged =
-            progress_file_has_potterflag_true(temp.path(), &rel).expect("read potterflag");
+            progress_file_has_finite_incantatem_true(temp.path(), &rel).expect("read stop flag");
         assert!(flagged);
     }
 
     #[test]
-    fn progress_file_has_potterflag_true_is_false_when_missing() {
+    fn progress_file_has_finite_incantatem_true_is_false_when_missing() {
         let temp = tempfile::tempdir().expect("tempdir");
         let progress = temp.path().join("MAIN.md");
         std::fs::write(
@@ -343,7 +343,7 @@ status: open
 
         let rel = PathBuf::from("MAIN.md");
         let flagged =
-            progress_file_has_potterflag_true(temp.path(), &rel).expect("read potterflag");
+            progress_file_has_finite_incantatem_true(temp.path(), &rel).expect("read stop flag");
         assert!(!flagged);
     }
 }

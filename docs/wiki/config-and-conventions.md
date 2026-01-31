@@ -16,7 +16,7 @@ Created by `cli/src/project.rs`:
 
 - `.codexpotter/projects/YYYYMMDD_N/MAIN.md`
   - the progress file that the agent is instructed to read/update each round
-  - the file contains front matter fields (`status`, `potterflag`, `short_title`) plus task lists
+  - the file contains front matter fields (`status`, `finite_incantatem`, `short_title`) plus task lists
 - a gitignored knowledge base directory
   - a scratchpad for intermediate findings; intentionally not committed
 

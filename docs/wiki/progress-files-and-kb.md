@@ -48,10 +48,10 @@ The workflow template defines:
 - `git_branch`: git branch name captured when the session is created
   - Empty when not on a branch (detached HEAD) or when the working directory is not a git repo.
   - **Not currently parsed by the runner**.
-- `potterflag`: `true` | `false`
+- `finite_incantatem`: `true` | `false`
   - **The only field currently read by the runner.**
   - When `true`, the CLI stops running additional rounds for the current session
-    (`cli/src/project.rs`: `progress_file_has_potterflag_true`).
+    (`cli/src/project.rs`: `progress_file_has_finite_incantatem_true`).
   - Queued sessions (queued user prompts) continue normally.
 
 ### How the file is used at runtime

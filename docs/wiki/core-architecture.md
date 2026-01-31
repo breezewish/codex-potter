@@ -145,7 +145,7 @@ For each round:
 5. Backend forwards `codex/event/*` notifications as `Event` values to the UI. The UI converts them
    into `HistoryCell`s and renders them.
 6. When a `TurnComplete`, `TurnAborted`, or fatal error event is observed, the round ends. The CLI
-   checks the progress file front matter for `potterflag: true` and decides whether to stop the
+   checks the progress file front matter for `finite_incantatem: true` and decides whether to stop the
    session early (`cli/src/project.rs`).
 
 ### 4) Queued prompts during a turn
