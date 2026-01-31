@@ -61,7 +61,14 @@ impl CodexPotterTui {
     /// - `Ok(Some(prompt))`: submitted
     /// - `Ok(None)`: cancelled (Ctrl+C)
     pub async fn prompt_user(&mut self) -> anyhow::Result<Option<String>> {
-        crate::app_server_render::prompt_user_with_tui(&mut self.tui).await
+        let show_startup_banner = !self.turns_rendered;
+        let composer_draft = self.composer_draft.take();
+        crate::app_server_render::prompt_user_with_tui(
+            &mut self.tui,
+            show_startup_banner,
+            composer_draft,
+        )
+        .await
     }
 
     /// Clear current screen contents (used to remove composer remnants).

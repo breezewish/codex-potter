@@ -117,9 +117,23 @@ async fn main() -> anyhow::Result<()> {
 
     let mut pending_user_prompts = prompt_queue::PromptQueue::new(user_prompt);
 
-    while let Some(user_prompt) =
-        pending_user_prompts.pop_next_prompt(|| ui.pop_queued_user_prompt())
-    {
+    'session: loop {
+        let next_prompt = pending_user_prompts.pop_next_prompt(|| ui.pop_queued_user_prompt());
+        let Some(next_prompt) =
+            prompt_queue::next_prompt_or_prompt_user(next_prompt, || ui.prompt_user()).await?
+        else {
+            break 'session;
+        };
+
+        let user_prompt = match next_prompt {
+            prompt_queue::NextPrompt::FromQueue(prompt) => prompt,
+            prompt_queue::NextPrompt::FromUser(prompt) => {
+                // Clear prompt UI remnants before doing any work / streaming output.
+                ui.clear()?;
+                prompt
+            }
+        };
+
         let init = crate::project::init_project(&workdir, &user_prompt, Local::now())
             .context("initialize .codexpotter project")?;
         let project_dir = init
@@ -181,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
                 ExitReason::UserRequested => {
                     backend.abort();
                     let _ = backend.await;
-                    return Ok(());
+                    break 'session;
                 }
                 ExitReason::Fatal(_) => {
                     backend.abort();

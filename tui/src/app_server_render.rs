@@ -27,6 +27,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
 use crate::bottom_pane::ChatComposer;
+use crate::bottom_pane::ChatComposerDraft;
 use crate::bottom_pane::InputResult;
 use crate::bottom_pane::PromptFooterOverride;
 use crate::exec_cell::CommandOutput;
@@ -89,7 +90,11 @@ fn new_default_bottom_pane(
     })
 }
 
-pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String>> {
+pub async fn prompt_user_with_tui(
+    tui: &mut Tui,
+    show_startup_banner: bool,
+    composer_draft: Option<ChatComposerDraft>,
+) -> anyhow::Result<Option<String>> {
     let (app_event_tx_raw, mut app_event_rx) = unbounded_channel::<AppEvent>();
     let app_event_tx = AppEventSender::new(app_event_tx_raw);
 
@@ -97,24 +102,29 @@ pub async fn prompt_user_with_tui(tui: &mut Tui) -> anyhow::Result<Option<String
     let file_search = FileSearchManager::new(file_search_dir.clone(), app_event_tx.clone());
     let mut prompt_history = crate::prompt_history_store::PromptHistoryStore::new();
 
-    let width = tui.terminal.last_known_screen_size.width.max(1);
-    let codex_model = crate::codex_config::resolve_codex_model_config(&file_search_dir)?;
-    let model_label = match codex_model.reasoning_effort {
-        Some(effort) => format!("{} {effort}", codex_model.model),
-        None => codex_model.model,
-    };
-    tui.insert_history_lines(crate::startup_banner::build_startup_banner_lines(
-        width,
-        env!("CARGO_PKG_VERSION"),
-        &model_label,
-        &file_search_dir,
-    ));
-
     let mut bottom_pane = new_default_bottom_pane(tui, app_event_tx.clone(), true);
+    if let Some(draft) = composer_draft {
+        bottom_pane.composer_mut().restore_draft(draft);
+    }
     let (history_log_id, history_entry_count) = prompt_history.metadata();
     bottom_pane
         .composer_mut()
         .set_history_metadata(history_log_id, history_entry_count);
+
+    if show_startup_banner {
+        let width = tui.terminal.last_known_screen_size.width.max(1);
+        let codex_model = crate::codex_config::resolve_codex_model_config(&file_search_dir)?;
+        let model_label = match codex_model.reasoning_effort {
+            Some(effort) => format!("{} {effort}", codex_model.model),
+            None => codex_model.model,
+        };
+        tui.insert_history_lines(crate::startup_banner::build_startup_banner_lines(
+            width,
+            env!("CARGO_PKG_VERSION"),
+            &model_label,
+            &file_search_dir,
+        ));
+    }
 
     let mut tui_events = tui.event_stream();
     tui.frame_requester().schedule_frame();
