@@ -1,0 +1,269 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  tag-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate tag matches Cargo.toml version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
+            || { echo "❌ Not a tag push"; exit 1; }
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+            || { echo "❌ Tag '${GITHUB_REF_NAME}' doesn't look like a semver tag (vX.Y.Z)"; exit 1; }
+
+          tag_ver="${GITHUB_REF_NAME#v}"
+          cargo_ver="$(
+            awk -F'\"' '
+              /^\[workspace\.package\]$/ { in_section = 1; next }
+              in_section && /^version[[:space:]]*=/ { print $2; exit }
+              in_section && /^\[/ { in_section = 0 }
+            ' Cargo.toml
+          )"
+
+          [[ -n "${cargo_ver}" ]] \
+            || { echo "❌ Failed to read workspace.package.version from Cargo.toml"; exit 1; }
+
+          [[ "${tag_ver}" == "${cargo_ver}" ]] \
+            || { echo "❌ Tag version ${tag_ver} ≠ Cargo.toml ${cargo_ver}"; exit 1; }
+
+          echo "✅ Tag and Cargo.toml agree (${tag_ver})"
+          echo "version=${tag_ver}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: tag-check
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+          - runner: macos-latest
+            target: x86_64-apple-darwin
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            build_with: cross
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel="$(awk -F'\"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          if [[ -z "$channel" ]]; then
+            echo "Failed to read Rust toolchain channel from rust-toolchain.toml." >&2
+            cat rust-toolchain.toml >&2
+            exit 1
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install cross
+        if: ${{ runner.os == 'Linux' && matrix.build_with == 'cross' }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Install musl tools
+        if: ${{ runner.os == 'Linux' && contains(matrix.target, 'musl') && matrix.build_with != 'cross' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools
+
+      - name: Cargo build
+        if: ${{ matrix.build_with != 'cross' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p codex-potter-cli --bin codex-potter --locked --release --target "${{ matrix.target }}"
+
+      - name: Cross build
+        if: ${{ runner.os == 'Linux' && matrix.build_with == 'cross' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cross build -p codex-potter-cli --bin codex-potter --locked --release --target "${{ matrix.target }}"
+
+      - name: Package (unix)
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
+        env:
+          VERSION: ${{ needs.tag-check.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+
+          dist_dir="dist/${TARGET}"
+          mkdir -p "${dist_dir}"
+
+          cp "target/${TARGET}/release/codex-potter" "${dist_dir}/codex-potter"
+          chmod +x "${dist_dir}/codex-potter"
+
+          tar -C "${dist_dir}" -czf "${dist_dir}/codex-potter-${VERSION}-${TARGET}.tar.gz" codex-potter
+
+      - name: Package (windows)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.tag-check.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $distDir = "dist/$env:TARGET"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+
+          $exePath = "target/$env:TARGET/release/codex-potter.exe"
+          Copy-Item $exePath "$distDir/codex-potter.exe"
+          Compress-Archive -Path "$distDir/codex-potter.exe" -DestinationPath "$distDir/codex-potter-$env:VERSION-$env:TARGET.zip" -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-potter-${{ matrix.target }}
+          path: dist/${{ matrix.target }}
+
+  release:
+    needs:
+      - tag-check
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (pack + publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Stage npm package
+        shell: bash
+        env:
+          VERSION: ${{ needs.tag-check.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          stage_root="${RUNNER_TEMP}/codex-potter-npm-stage"
+          rm -rf "${stage_root}"
+          mkdir -p "${stage_root}/bin"
+          mkdir -p "${stage_root}/vendor"
+
+          cp -R npm/bin/* "${stage_root}/bin/"
+          cp npm/README.md "${stage_root}/README.md"
+          cp npm/package.json "${stage_root}/package.json"
+
+          node -e "
+            const fs = require('fs');
+            const path = '${stage_root}/package.json';
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\\n');
+          "
+
+          for artifact_dir in dist/codex-potter-*; do
+            target=\"${artifact_dir##dist/codex-potter-}\"
+            vendor_target_dir=\"${stage_root}/vendor/${target}/codex-potter\"
+            mkdir -p \"${vendor_target_dir}\"
+
+            if [[ \"${target}\" == *windows* ]]; then
+              cp \"${artifact_dir}/codex-potter.exe\" \"${vendor_target_dir}/codex-potter.exe\"
+            else
+              cp \"${artifact_dir}/codex-potter\" \"${vendor_target_dir}/codex-potter\"
+              chmod +x \"${vendor_target_dir}/codex-potter\"
+            fi
+          done
+
+          mkdir -p dist/npm
+          tarball_name="$(
+            cd "${stage_root}" \
+              && npm pack --json --pack-destination "${GITHUB_WORKSPACE}/dist/npm" \
+              | node -e \"const fs=require('fs'); const out=JSON.parse(fs.readFileSync(0,'utf8')); process.stdout.write(out[0].filename || out[0].name);\"
+          )"
+          mv "dist/npm/${tarball_name}" "dist/npm/codex-potter-npm-${VERSION}.tgz"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ needs.tag-check.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(needs.tag-check.outputs.version, '-') }}
+          files: |
+            dist/**/codex-potter-${{ needs.tag-check.outputs.version }}-*.tar.gz
+            dist/**/codex-potter-${{ needs.tag-check.outputs.version }}-*.zip
+            dist/npm/codex-potter-npm-${{ needs.tag-check.outputs.version }}.tgz
+
+      - name: Publish to npm
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.tag-check.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          tag_args=()
+          if [[ "${VERSION}" == *-alpha.* ]]; then
+            tag_args+=(--tag alpha)
+          elif [[ "${VERSION}" == *-beta.* ]]; then
+            tag_args+=(--tag beta)
+          elif [[ "${VERSION}" == *-* ]]; then
+            tag_args+=(--tag next)
+          fi
+
+          npm publish "dist/npm/codex-potter-npm-${VERSION}.tgz" --access public "${tag_args[@]}"
