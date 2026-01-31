@@ -110,7 +110,8 @@ Durable memory is the progress file and the repository state on disk.
 ### 1) Startup
 
 1. Resolve the `codex` binary (`cli/src/startup.rs`).
-2. (Best-effort) configure `~/.codexpotter/codex-compat/` and pass it to app-server via config
+2. (Best-effort) configure `~/.codexpotter/codex-compat/` and pass it to the app-server by setting
+   the `CODEX_HOME` environment variable when spawning the process
    (`cli/src/codex_compat.rs` + `cli/src/app_server_backend.rs`).
 3. Initialize the terminal UI (`codex_tui::CodexPotterTui::new()`).
 4. Optionally show a global gitignore recommendation prompt.

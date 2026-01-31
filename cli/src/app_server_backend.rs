@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -125,7 +126,8 @@ async fn run_app_server_backend_inner(
     event_tx: &UnboundedSender<Event>,
     fatal_exit_tx: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
-    let (mut child, stdin, stdout, stderr) = spawn_app_server(&codex_bin, launch).await?;
+    let (mut child, stdin, stdout, stderr) =
+        spawn_app_server(&codex_bin, launch, codex_home.as_deref()).await?;
     let stderr_capture = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stderr_truncated = Arc::new(AtomicBool::new(false));
     let stderr_task = {
@@ -189,7 +191,6 @@ async fn run_app_server_backend_inner(
             ThreadStartSettings {
                 developer_instructions,
                 sandbox_mode: launch.thread_sandbox,
-                codex_home,
             },
             event_tx,
             &mut message_state,
@@ -302,9 +303,14 @@ async fn run_app_server_backend_inner(
 async fn spawn_app_server(
     codex_bin: &str,
     launch: AppServerLaunchConfig,
+    codex_home: Option<&Path>,
 ) -> anyhow::Result<(Child, ChildStdin, ChildStdout, ChildStderr)> {
     let mut cmd = Command::new(codex_bin);
     cmd.kill_on_drop(true);
+
+    if let Some(codex_home) = codex_home {
+        cmd.env("CODEX_HOME", codex_home);
+    }
 
     if launch.bypass_approvals_and_sandbox {
         cmd.arg("--dangerously-bypass-approvals-and-sandbox");
@@ -369,7 +375,6 @@ async fn initialize_app_server(
 struct ThreadStartSettings {
     developer_instructions: Option<String>,
     sandbox_mode: Option<crate::app_server_protocol::SandboxMode>,
-    codex_home: Option<PathBuf>,
 }
 
 async fn thread_start(
@@ -383,17 +388,8 @@ async fn thread_start(
     let ThreadStartSettings {
         developer_instructions,
         sandbox_mode,
-        codex_home,
     } = settings;
     let request_id = next_request_id(next_id);
-    let config = codex_home.map(|codex_home| {
-        let mut config = std::collections::HashMap::new();
-        config.insert(
-            "codex_home".to_string(),
-            serde_json::Value::String(codex_home.to_string_lossy().into_owned()),
-        );
-        config
-    });
     let request = ClientRequest::ThreadStart {
         request_id: request_id.clone(),
         params: ThreadStartParams {
@@ -402,7 +398,7 @@ async fn thread_start(
             cwd: None,
             approval_policy: Some(crate::app_server_protocol::AskForApproval::Never),
             sandbox: sandbox_mode,
-            config,
+            config: None,
             base_instructions: None,
             developer_instructions,
             experimental_raw_events: false,
@@ -956,7 +952,7 @@ touch "$MARKER"
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn backend_includes_codex_home_config_when_provided() {
+    async fn backend_sets_codex_home_env_when_provided() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -970,10 +966,15 @@ touch "$MARKER"
 set -euo pipefail
 
 MARKER="{marker}"
-CODEX_HOME="{codex_home}"
+EXPECTED_CODEX_HOME="{codex_home}"
 
 if [[ "${{1:-}}" != "app-server" ]]; then
   echo "expected app-server, got: $*" >&2
+  exit 1
+fi
+
+if [[ "${{CODEX_HOME:-}}" != "$EXPECTED_CODEX_HOME" ]]; then
+  echo "expected CODEX_HOME=$EXPECTED_CODEX_HOME, got: ${{CODEX_HOME:-}}" >&2
   exit 1
 fi
 
@@ -986,10 +987,10 @@ IFS= read -r _line
 
 # thread/start request
 IFS= read -r thread_start
-echo "$thread_start" | grep -Fq "\"codex_home\":\"$CODEX_HOME\"" || {{
-  echo "expected codex_home in thread/start config, got: $thread_start" >&2
+if echo "$thread_start" | grep -Fq '"codex_home"'; then
+  echo "did not expect codex_home in thread/start config, got: $thread_start" >&2
   exit 1
-}}
+fi
 echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","preview":"","modelProvider":"test-provider","createdAt":0,"updatedAt":0,"path":"rollout.jsonl","cwd":"project","cliVersion":"0.0.0","source":"appServer","gitInfo":null,"turns":[]}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"readOnly"}},"reasoningEffort":null}}}}'
 
 # Wait for the client to close stdin to request shutdown.

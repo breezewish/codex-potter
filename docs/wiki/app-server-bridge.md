@@ -60,6 +60,9 @@ It runs:
 
 and captures stdin/stdout/stderr pipes.
 
+If a "codex-compat" home is available (`cli/src/codex_compat.rs`), the bridge sets the child
+process environment variable `CODEX_HOME` so the upstream app-server uses that home directory.
+
 ### 2) Initialize handshake (`initialize` + `initialized`)
 
 Entry point: `initialize_app_server(...)`.
@@ -84,8 +87,7 @@ Key behavior:
 - Always requests `approvalPolicy: "never"` for the thread.
 - Optionally requests a sandbox mode (`sandbox`) derived from CLI flags.
 - Injects the developer prompt as `developerInstructions`.
-- Optionally sets `config["codex_home"]` (the "codex-compat" home maintained by
-  `cli/src/codex_compat.rs`).
+- Does not override Codex home via `thread/start` config; `CODEX_HOME` is set at process spawn.
 
 Note: `thread/start` is modeled as a **v2** payload (`protocol/v2.rs`), even though `initialize`
 uses v1.
