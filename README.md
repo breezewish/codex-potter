@@ -6,20 +6,21 @@
   <img src="./etc/screenshot.png" alt="CodexPotter screenshot" width="80%" />
 </p>
 
-<p align="center"><strong>CodexPotter</strong> continuously <strong>reconciles</strong> codebase toward your instructed state</p>
-<p align="center"><em>(the <a href="https://ghuntley.com/ralph/">Ralph Wiggum</a> pattern)</em></p>
-
 ## 💡 Why CodexPotter
+
+**CodexPotter** continuously **reconciles** code base toward your instructed state ([Ralph Wiggum pattern](https://ghuntley.com/ralph/)):
 
 - 🤖 **Codex-first** — Codex subscription is all you need; no extra LLM needed.
 
+- 🧭 **Auto-review / reconcile** — Review and polish until fully aligned with your instruction.
+
 - 🚀 **Never worse than Codex** — Drive Codex, nothing more; no business prompts which may not suit you.
 
-- 🧩 **Seamless integration** — AGENTS.md and skills just work™ ; utilize local skills to plan, review, etc.
-
-- 🪶 **Tiny footprint** — Only use [<1k tokens](./cli/prompts/developer_prompt.md), ensuring LLM context fully serves your business logic.
+- 🧩 **Seamless integration** — AGENTS.md, skills & MCPs just work™ ; opt in to improve plan / review.
 
 - 🧠 **File system as memory** — Store instructions in files to resist compaction and preserve all details.
+
+- 🪶 **Tiny footprint** — Use [<1k tokens](./cli/prompts/developer_prompt.md), ensuring LLM context fully serves your business logic.
 
 - 📚 **Built-in knowledge base** — Keep a local KB as index so Codex learns project fast in clean contexts.
 
@@ -69,19 +70,20 @@ codex-potter --yolo
 
 ## Development
 
-Our GitHub Actions CI runs the following checks on every PR and on pushes to `main`.
-You can run the same commands locally:
-
 ```sh
 # Formatting
-cargo fmt --all -- --check
+cargo fmt
 
 # Lints
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy
 
-# Tests (CI uses nextest with retries; install via `cargo install cargo-nextest --locked`)
-cargo nextest run --workspace --locked --cargo-profile ci-test -P ci
+# Tests
+cargo nextest run
 
 # Build
-cargo build --workspace --all-targets --locked
+cargo build
 ```
+
+## License
+
+This project is community-driven fork of [openai/codex](https://github.com/openai/codex) repository, licensed under the same Apache-2.0 License.
