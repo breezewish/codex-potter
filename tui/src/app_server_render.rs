@@ -2428,7 +2428,7 @@ mod tests {
             msg: EventMsg::PotterSessionSucceeded {
                 rounds: 4,
                 duration: Duration::from_secs(24 * 60 + 34),
-                user_prompt_file: PathBuf::from(".codexpotter/projects/20260201_11/MAIN.md"),
+                user_prompt_file: PathBuf::from(".codexpotter/projects/2026/02/01/11/MAIN.md"),
                 git_commit_start: String::from("fb827a203635875b58d7e6792da84f22d723d41b"),
                 git_commit_end: String::from("662d232cafebabedeadbeefdeadbeefdeadbeef"),
             },
@@ -2631,8 +2631,8 @@ mod tests {
             msg: EventMsg::PotterSessionStarted {
                 user_message: None,
                 working_dir: PathBuf::from("project"),
-                project_dir: PathBuf::from(".codexpotter/projects/20260129_18"),
-                user_prompt_file: PathBuf::from(".codexpotter/projects/20260129_18/MAIN.md"),
+                project_dir: PathBuf::from(".codexpotter/projects/2026/01/29/18"),
+                user_prompt_file: PathBuf::from(".codexpotter/projects/2026/01/29/18/MAIN.md"),
             },
         });
         proc.handle_codex_event(Event {
@@ -2952,8 +2952,8 @@ mod tests {
             msg: EventMsg::PotterSessionStarted {
                 user_message: Some("test prompt".to_string()),
                 working_dir: PathBuf::from("/workdir"),
-                project_dir: PathBuf::from(".codexpotter/projects/20260129_11"),
-                user_prompt_file: PathBuf::from(".codexpotter/projects/20260129_11/MAIN.md"),
+                project_dir: PathBuf::from(".codexpotter/projects/2026/01/29/11"),
+                user_prompt_file: PathBuf::from(".codexpotter/projects/2026/01/29/11/MAIN.md"),
             },
         });
 
