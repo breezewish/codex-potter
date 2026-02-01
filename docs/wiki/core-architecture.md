@@ -87,7 +87,7 @@ Key modules:
    - `.codexpotter/projects/YYYYMMDD_N/MAIN.md` (progress file)
    - a gitignored knowledge base directory (scratchpad for intermediate findings)
 2. Per-user state under the user's home directory:
-   - `~/.config/codexpotter/config.toml` (or `$XDG_CONFIG_HOME/codexpotter/config.toml`)
+   - `~/.codexpotter/config.toml`
    - `~/.codexpotter/history.jsonl` (prompt history for the composer)
    - `~/.codexpotter/codex-compat/` (a "Codex home" shim; symlinks to `~/.codex/*`)
 

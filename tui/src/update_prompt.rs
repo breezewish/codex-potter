@@ -26,14 +26,18 @@ use crate::update_action::UpdateAction;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_lines;
 
-pub(crate) enum UpdatePromptOutcome {
+/// Result of running the update prompt.
+pub enum UpdatePromptOutcome {
     Continue,
     RunUpdate(UpdateAction),
 }
 
-pub(crate) async fn run_update_prompt_if_needed(
-    tui: &mut Tui,
-) -> anyhow::Result<UpdatePromptOutcome> {
+/// Runs the update prompt if an update is available and should be shown.
+///
+/// Returns:
+/// - `Continue` when no update prompt is needed or the user dismissed it
+/// - `RunUpdate` when the user chose to run the self-update command
+pub async fn run_update_prompt_if_needed(tui: &mut Tui) -> anyhow::Result<UpdatePromptOutcome> {
     let Some(latest_version) = crate::updates::get_upgrade_version_for_popup() else {
         return Ok(UpdatePromptOutcome::Continue);
     };

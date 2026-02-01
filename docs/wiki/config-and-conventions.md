@@ -22,7 +22,7 @@ Created by `cli/src/project.rs`:
 
 ### Per-user (under the home directory)
 
-- `~/.config/codexpotter/config.toml` (or `$XDG_CONFIG_HOME/codexpotter/config.toml`)
+- `~/.codexpotter/config.toml`
   - currently used for `notice.hide_gitignore_prompt` (`cli/src/config.rs`)
 - `~/.codexpotter/history.jsonl`
   - prompt history for the bottom composer (see `tui-chat-composer.md`)

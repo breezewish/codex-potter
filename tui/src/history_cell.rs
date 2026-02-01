@@ -201,7 +201,7 @@ impl UpdateAvailableHistoryCell {
 }
 
 impl HistoryCell for UpdateAvailableHistoryCell {
-    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let update_instruction = if let Some(update_action) = self.update_action {
             Line::from(vec![
                 "Run ".into(),
@@ -247,7 +247,7 @@ impl HistoryCell for UpdateAvailableHistoryCell {
             )]),
         ];
 
-        with_border(content)
+        with_border_clamped(content, width)
     }
 }
 
@@ -272,12 +272,13 @@ impl PrefixedWrappedHistoryCell {
     }
 }
 
-/// Render `lines` inside a border sized to the widest span in the content.
-pub(crate) fn with_border(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
-    with_border_internal(lines)
-}
+/// Render `lines` inside a border sized to the widest span in the content, but clamped so it
+/// never exceeds the available terminal `width`.
+fn with_border_clamped(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    if width < 4 {
+        return Vec::new();
+    }
 
-fn with_border_internal(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     let max_line_width = lines
         .iter()
         .map(|line| {
@@ -287,7 +288,11 @@ fn with_border_internal(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         })
         .max()
         .unwrap_or(0);
-    let content_width = max_line_width;
+
+    // Mirrors upstream behavior: clamp to `min(content_width, width - 4)` to avoid border
+    // overflow on narrow terminals.
+    let max_inner_width = usize::from(width.saturating_sub(4));
+    let content_width = max_line_width.min(max_inner_width);
 
     let mut out = Vec::with_capacity(lines.len() + 2);
     let border_inner_width = content_width + 2;
@@ -317,7 +322,7 @@ fn with_border_internal(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
 /// Return the emoji followed by a hair space (U+200A).
 /// Using only the hair space avoids excessive padding after the emoji while
 /// still providing a small visual gap across terminals.
-pub(crate) fn padded_emoji(emoji: &str) -> String {
+fn padded_emoji(emoji: &str) -> String {
     format!("{emoji}\u{200A}")
 }
 
@@ -550,5 +555,35 @@ impl HistoryCell for FinalMessageSeparator {
         } else {
             vec![Line::from_iter(["─".repeat(width as usize).dim()])]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn display_width(line: &Line<'_>) -> usize {
+        line.iter()
+            .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+            .sum()
+    }
+
+    #[test]
+    fn with_border_clamped_limits_border_to_terminal_width() {
+        let width = 20u16;
+        let lines = with_border_clamped(vec![Line::from("x".repeat(100))], width);
+
+        assert!(!lines.is_empty());
+        assert_eq!(display_width(&lines[0]), usize::from(width));
+        assert_eq!(
+            display_width(lines.last().expect("missing bottom border")),
+            usize::from(width)
+        );
+    }
+
+    #[test]
+    fn with_border_clamped_returns_empty_when_width_too_small() {
+        assert!(with_border_clamped(vec![Line::from("hello")], 3).is_empty());
     }
 }

@@ -59,7 +59,7 @@ Key modules (high-level):
 - `cli/src/codex_compat.rs`: maintains a `~/.codexpotter/codex-compat/` directory and symlinks
   `~/.codex/{config.toml,auth.json}` into it; used to point the app-server at a stable "Codex
   home".
-- `cli/src/config.rs`: `~/.config/codexpotter/config.toml` (or `$XDG_CONFIG_HOME/...`) persistence
+- `cli/src/config.rs`: `~/.codexpotter/config.toml` persistence
   (currently mainly for the global gitignore prompt).
 
 Key types:

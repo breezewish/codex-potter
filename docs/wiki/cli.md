@@ -80,8 +80,7 @@ codex-potter --yolo
   - ctrl+g to open an external editor (requires `$VISUAL` or `$EDITOR`), the same as codex.
 - Thinking / reasoning events are intentionally filtered and not rendered.
 - The global gitignore prompt can be disabled by setting
-  `notice.hide_gitignore_prompt = true` in `~/.config/codexpotter/config.toml` (or
-  `$XDG_CONFIG_HOME/codexpotter/config.toml` if `XDG_CONFIG_HOME` is set).
+  `notice.hide_gitignore_prompt = true` in `~/.codexpotter/config.toml`.
 - `--yolo` (`--dangerously-bypass-approvals-and-sandbox`) is unsafe: it disables Codex approvals and
   sandboxing, and `codex-potter` will also request `sandbox: "danger-full-access"` for the thread.
 - The client requests `approvalPolicy: "never"` when starting the thread, and `codex-potter` is

@@ -23,13 +23,7 @@ impl ConfigStore {
         let Some(home) = dirs::home_dir() else {
             anyhow::bail!("cannot determine home directory for config path");
         };
-        let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
-        Ok(Self::new(default_config_path(
-            &home,
-            xdg_config_home.as_deref(),
-        )))
+        Ok(Self::new(default_config_path(&home)))
     }
 
     pub fn notice_hide_gitignore_prompt(&self) -> anyhow::Result<bool> {
@@ -88,11 +82,8 @@ impl ConfigStore {
     }
 }
 
-fn default_config_path(home: &Path, xdg_config_home: Option<&Path>) -> PathBuf {
-    let base = xdg_config_home
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"));
-    base.join("codexpotter").join("config.toml")
+fn default_config_path(home: &Path) -> PathBuf {
+    home.join(".codexpotter").join("config.toml")
 }
 
 fn read_notice_hide_gitignore_prompt(doc: &DocumentMut) -> Option<bool> {
@@ -315,17 +306,11 @@ check_for_update_on_startup = false # keep me
     }
 
     #[test]
-    fn default_config_path_prefers_xdg_config_home_when_set() {
+    fn default_config_path_uses_codexpotter_home_dir() {
         let home = Path::new("home");
-        let xdg = Path::new("xdg");
-
         assert_eq!(
-            default_config_path(home, None),
-            home.join(".config").join("codexpotter").join("config.toml")
-        );
-        assert_eq!(
-            default_config_path(home, Some(xdg)),
-            xdg.join("codexpotter").join("config.toml")
+            default_config_path(home),
+            home.join(".codexpotter").join("config.toml")
         );
     }
 }
