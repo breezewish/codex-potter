@@ -64,7 +64,6 @@ impl HistoryCell for PotterSessionSucceededCell {
         let elapsed = crate::status_indicator_widget::fmt_elapsed_compact(self.duration.as_secs());
         let rounds = self.rounds;
         let mut lines: Vec<Line<'static>> = vec![
-            Line::from(""),
             potter_project_finished_separator(width),
             Line::from(""),
             Line::from("Summary:").bold(),

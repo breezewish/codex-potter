@@ -1,0 +1,28 @@
+---
+source: tui/src/app_server_render.rs
+assertion_line: 2457
+expression: terminal.backend().vt100().screen().contents()
+---
+
+
+
+
+
+› test prompt
+
+
+• Ran true
+
+─ Worked for 0s ────────────────────────────────────────────────────────────────
+
+• - Finished the project.
+
+─ CodexPotter project is finished ──────────────────────────────────────────────
+
+Summary:
+
+  Iterated 4 rounds in 24m 34s.
+
+  Full task history: .codexpotter/projects/20260201_11/MAIN.md
+
+  Git: fb827a2 -> 662d232
