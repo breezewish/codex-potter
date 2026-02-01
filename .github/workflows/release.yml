@@ -166,6 +166,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Checkout
@@ -174,7 +175,7 @@ jobs:
       - name: Setup Node.js (pack + publish)
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
 
       - name: Download build artifacts
@@ -248,7 +249,6 @@ jobs:
       - name: Publish to npm
         shell: bash
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.tag-check.outputs.version }}
         run: |
           set -euo pipefail
