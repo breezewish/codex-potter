@@ -6,58 +6,48 @@
   <img src="./etc/screenshot.png" alt="CodexPotter screenshot" width="80%" />
 </p>
 
+&ensp;
+
 ## 💡 Why CodexPotter
 
 **CodexPotter** continuously **reconciles** code base toward your instructed state ([Ralph Wiggum pattern](https://ghuntley.com/ralph/)):
 
 - 🤖 **Codex-first** — Codex subscription is all you need; no extra LLM needed.
-
-- 🧭 **Auto-review / reconcile** — Review and polish until fully aligned with your instruction.
-
+- 🧭 **Auto-review / reconcile** — Review and polish multi rounds until fully aligned with your instruction.
 - 🚀 **Never worse than Codex** — Drive Codex, nothing more; no business prompts which may not suit you.
-
 - 🧩 **Seamless integration** — AGENTS.md, skills & MCPs just work™ ; opt in to improve plan / review.
-
 - 🧠 **File system as memory** — Store instructions in files to resist compaction and preserve all details.
-
 - 🪶 **Tiny footprint** — Use [<1k tokens](./cli/prompts/developer_prompt.md), ensuring LLM context fully serves your business logic.
-
 - 📚 **Built-in knowledge base** — Keep a local KB as index so Codex learns project fast in clean contexts.
+
+&ensp;
 
 ## ⚡️ Getting started
 
-### Install (recommended)
+**1. Prerequisites:** ensure you have [codex CLI](https://developers.openai.com/codex/quickstart?setup=cli) locally. CodexPotter drives your local codex to perform tasks.
 
-```sh
+**2. Install CodexPotter via npm or bun:**
+
+```shell
+# Install via npm
 npm install -g codex-potter
 ```
 
-Then run:
+```shell
+# Install via bun
+bun install -g codex-potter
+```
+
+**3. Run:** Start CodexPotter in your project directory, just like Codex:
 
 ```sh
+# --yolo is recommended to be fully autonomous
 codex-potter --yolo
 ```
 
-Supported platforms (via prebuilt native binaries):
+⚠️ **Note:** Unlike Codex, every follow up prompt turns into a **new** task, **not sharing previous contexts**. Assign tasks to CodexPotter, instead of chat with it.
 
-- macOS: Apple Silicon + Intel
-- Linux: x86_64 + aarch64
-- Windows: x86_64 + aarch64 (ARM64)
-- Android: treated as Linux (uses the bundled Linux musl binaries)
-
-### Build from source
-
-```sh
-cargo build
-```
-
-Then, run CodexPotter CLI (available in `target/debug/codex-potter`) in your project directory, just like `codex`:
-
-```sh
-codex-potter --yolo
-```
-
-⚠️ **Note:** Unlike codex, follow up prompts will become a **new** task assigned to CodexPotter, **without sharing contexts**.
+&ensp;
 
 ## Roadmap
 
@@ -67,6 +57,9 @@ codex-potter --yolo
 - [ ] Interoperability with codex CLI sessions (for follow-up prompts)
 - [ ] Allow opting out knowledge base
 - [ ] Recommended skills for PRD and code review
+- [ ] Better handling of stream disconnect / similar network issues
+
+&ensp;
 
 ## Development
 
@@ -83,6 +76,8 @@ cargo nextest run
 # Build
 cargo build
 ```
+
+&ensp;
 
 ## License
 
