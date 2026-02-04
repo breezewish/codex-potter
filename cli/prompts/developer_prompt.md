@@ -43,9 +43,11 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 
 5. If all `Todo` tasks are complete, it does not mean the work is done. Instead:
 
-   5.1 Fully read and understand `Overall Goal`, verify and review against what has changed so far.
+   5.1 Read full progress file, deep research with `Overall Goal`, then verify and review against what has changed so far.
 
    5.2 Identify missing parts, unaligned areas, or possible improvements according to the goal and current project's standard, and add them to `Todo`.
+
+   Important: tasks in `Done` are only for you to *understand the current approach*; they not be not correct, may not respect the project's standard, or may not be the best way. You must re-evaluate from scratch, based on the current impl of the codebase to enhance your understanding of the user request, see whether there are completely better ways to achieve the overall goal, or even something is still missing. Done tasks may also indicate what has been tried before, help you avoid going down wrong paths again.
 
    5.3 If the overall goal is to make changes, consider improvements of various kinds (coding, docs, UX, performance, edge cases, etc), for example, but not limited to:
    - Coding kind: polish, simplification/completion, quality, performance, edge cases, error handling, UX, docs, etc.
