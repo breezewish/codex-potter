@@ -163,6 +163,14 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    /// Returns the current status indicator header text.
+    ///
+    /// This is the logical header string tracked by the bottom pane, regardless of whether the
+    /// status indicator is currently visible.
+    pub fn status_header(&self) -> &str {
+        &self.status_header
+    }
+
     pub fn set_status_header_prefix(&mut self, prefix: Option<String>) {
         let prefix = prefix.filter(|value| !value.is_empty());
         if self.status_header_prefix == prefix {
