@@ -27,6 +27,8 @@ use crate::app_server_protocol::ThreadStartResponse;
 use crate::app_server_protocol::TurnStartParams;
 use crate::app_server_protocol::TurnStartResponse;
 use crate::app_server_protocol::UserInput as ApiUserInput;
+use crate::potter_stream_recovery::ContinueRetryDecision;
+use crate::potter_stream_recovery::PotterStreamRecovery;
 use anyhow::Context;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::ErrorEvent;
@@ -35,6 +37,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SessionConfiguredEvent;
+use codex_protocol::user_input::UserInput as CodexUserInput;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
@@ -46,6 +49,18 @@ use tokio::process::ChildStdout;
 use tokio::process::Command;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::unbounded_channel;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecoveryAction {
+    SendContinue,
+}
+
+struct StreamRecoveryContext {
+    stream_recovery: PotterStreamRecovery,
+    recovery_action_tx: UnboundedSender<RecoveryAction>,
+    has_sent_turn_start: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppServerLaunchConfig {
@@ -164,6 +179,12 @@ async fn run_app_server_backend_inner(
     let mut lines = BufReader::new(stdout).lines();
     let mut next_id: i64 = 1;
     let mut shutdown_requested = false;
+    let (recovery_action_tx, mut recovery_action_rx) = unbounded_channel::<RecoveryAction>();
+    let mut recovery = StreamRecoveryContext {
+        stream_recovery: PotterStreamRecovery::new(),
+        recovery_action_tx,
+        has_sent_turn_start: false,
+    };
 
     let result = async {
         initialize_app_server(
@@ -172,6 +193,7 @@ async fn run_app_server_backend_inner(
                 .context("codex app-server stdin unavailable")?,
             &mut lines,
             &mut next_id,
+            &mut recovery,
             event_tx,
         )
         .await?;
@@ -186,6 +208,7 @@ async fn run_app_server_backend_inner(
                 developer_instructions,
                 sandbox_mode: launch.thread_sandbox,
             },
+            &mut recovery,
             event_tx,
         )
         .await?;
@@ -205,15 +228,50 @@ async fn run_app_server_backend_inner(
                         stdin.take();
                         continue;
                     };
+                    if matches!(op, Op::UserInput { .. }) {
+                        recovery.has_sent_turn_start = true;
+                    }
                     handle_op(
                         &thread_id,
                         op,
                         stdin.as_mut().context("codex app-server stdin unavailable")?,
                         &mut lines,
                         &mut next_id,
+                        &mut recovery,
                         event_tx,
                     )
                     .await?;
+                }
+                maybe_action = recovery_action_rx.recv(), if !shutdown_requested => {
+                    let Some(action) = maybe_action else {
+                        continue;
+                    };
+
+                    if !recovery.stream_recovery.is_in_retry_streak() {
+                        continue;
+                    }
+
+                    match action {
+                        RecoveryAction::SendContinue => {
+                            recovery.has_sent_turn_start = true;
+                            handle_op(
+                                &thread_id,
+                                Op::UserInput {
+                                    items: vec![CodexUserInput::Text {
+                                        text: String::from("Continue"),
+                                        text_elements: Vec::new(),
+                                    }],
+                                    final_output_json_schema: None,
+                                },
+                                stdin.as_mut().context("codex app-server stdin unavailable")?,
+                                &mut lines,
+                                &mut next_id,
+                                &mut recovery,
+                                event_tx,
+                            )
+                            .await?;
+                        }
+                    }
                 }
                 maybe_line = lines.next_line() => {
                     let Some(line) = maybe_line? else {
@@ -221,7 +279,13 @@ async fn run_app_server_backend_inner(
                     };
                     let msg: JSONRPCMessage = serde_json::from_str(&line)
                         .with_context(|| format!("failed to decode app-server message: {line}"))?;
-                    handle_app_server_message(msg, &mut stdin, event_tx).await?;
+                    handle_app_server_message(
+                        msg,
+                        &mut stdin,
+                        &mut recovery,
+                        event_tx,
+                    )
+                    .await?;
                 }
             }
         }
@@ -333,6 +397,7 @@ async fn initialize_app_server(
     stdin: &mut ChildStdin,
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     next_id: &mut i64,
+    recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) -> anyhow::Result<()> {
     let request_id = next_request_id(next_id);
@@ -347,7 +412,7 @@ async fn initialize_app_server(
         },
     };
     send_message(stdin, &request).await?;
-    let _response = read_until_response(stdin, lines, request_id, event_tx).await?;
+    let _response = read_until_response(stdin, lines, request_id, recovery, event_tx).await?;
 
     send_message(stdin, &ClientNotification::Initialized).await?;
     Ok(())
@@ -363,6 +428,7 @@ async fn thread_start(
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     next_id: &mut i64,
     settings: ThreadStartSettings,
+    recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) -> anyhow::Result<ThreadStartResponse> {
     let ThreadStartSettings {
@@ -385,7 +451,7 @@ async fn thread_start(
         },
     };
     send_message(stdin, &request).await?;
-    let response = read_until_response(stdin, lines, request_id, event_tx).await?;
+    let response = read_until_response(stdin, lines, request_id, recovery, event_tx).await?;
     serde_json::from_value(response.result).context("decode thread/start response")
 }
 
@@ -395,6 +461,7 @@ async fn handle_op(
     stdin: &mut ChildStdin,
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     next_id: &mut i64,
+    recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) -> anyhow::Result<()> {
     match op {
@@ -420,7 +487,8 @@ async fn handle_op(
                 },
             };
             send_message(stdin, &request).await?;
-            let response = read_until_response(stdin, lines, request_id, event_tx).await?;
+            let response =
+                read_until_response(stdin, lines, request_id, recovery, event_tx).await?;
             let _parsed: TurnStartResponse =
                 serde_json::from_value(response.result).context("decode turn/start response")?;
             Ok(())
@@ -441,11 +509,17 @@ async fn handle_op(
 async fn handle_app_server_message(
     msg: JSONRPCMessage,
     stdin: &mut Option<ChildStdin>,
+    recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) -> anyhow::Result<()> {
     match msg {
         JSONRPCMessage::Notification(notification) => {
-            handle_codex_event_notification(&notification.method, notification.params, event_tx)?;
+            handle_codex_event_notification(
+                &notification.method,
+                notification.params,
+                recovery,
+                event_tx,
+            )?;
         }
         JSONRPCMessage::Request(request) => {
             if let Some(stdin) = stdin.as_mut() {
@@ -461,6 +535,7 @@ async fn handle_app_server_message(
 fn handle_codex_event_notification(
     method: &str,
     params: Option<serde_json::Value>,
+    recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) -> anyhow::Result<()> {
     if !method.starts_with("codex/event/") {
@@ -471,8 +546,82 @@ fn handle_codex_event_notification(
     };
 
     let event: Event = serde_json::from_value(params)?;
-    let _ = event_tx.send(event);
+    handle_codex_event(event, recovery, event_tx);
     Ok(())
+}
+
+fn handle_codex_event(
+    event: Event,
+    recovery: &mut StreamRecoveryContext,
+    event_tx: &UnboundedSender<Event>,
+) {
+    let mut should_forward = true;
+
+    let was_in_retry_streak = recovery.stream_recovery.is_in_retry_streak();
+    let should_suppress_turn_complete = match &event.msg {
+        EventMsg::TurnComplete(ev) => recovery.stream_recovery.should_suppress_turn_complete(ev),
+        _ => false,
+    };
+
+    recovery.stream_recovery.observe_event(&event.msg);
+
+    if was_in_retry_streak && !recovery.stream_recovery.is_in_retry_streak() {
+        let _ = event_tx.send(Event {
+            id: event.id.clone(),
+            msg: EventMsg::PotterStreamRecoveryRecovered,
+        });
+    }
+
+    if let EventMsg::Error(err) = &event.msg
+        && recovery.has_sent_turn_start
+        && let Some(decision) = recovery.stream_recovery.plan_retry(err)
+    {
+        match decision {
+            ContinueRetryDecision::Retry(plan) => {
+                let _ = event_tx.send(Event {
+                    id: event.id.clone(),
+                    msg: EventMsg::PotterStreamRecoveryUpdate {
+                        attempt: plan.attempt,
+                        max_attempts: plan.max_attempts,
+                        error_message: err.message.clone(),
+                    },
+                });
+
+                let tx = recovery.recovery_action_tx.clone();
+                if plan.backoff.is_zero() {
+                    let _ = tx.send(RecoveryAction::SendContinue);
+                } else {
+                    tokio::spawn(async move {
+                        tokio::time::sleep(plan.backoff).await;
+                        let _ = tx.send(RecoveryAction::SendContinue);
+                    });
+                }
+            }
+            ContinueRetryDecision::GiveUp {
+                attempts,
+                max_attempts,
+            } => {
+                let _ = event_tx.send(Event {
+                    id: event.id.clone(),
+                    msg: EventMsg::PotterStreamRecoveryGaveUp {
+                        error_message: err.message.clone(),
+                        attempts,
+                        max_attempts,
+                    },
+                });
+            }
+        }
+
+        should_forward = false;
+    }
+
+    if should_suppress_turn_complete {
+        should_forward = false;
+    }
+
+    if should_forward {
+        let _ = event_tx.send(event);
+    }
 }
 
 async fn handle_server_request(
@@ -564,6 +713,7 @@ async fn read_until_response(
     stdin: &mut ChildStdin,
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     request_id: RequestId,
+    recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) -> anyhow::Result<JSONRPCResponse> {
     loop {
@@ -585,6 +735,7 @@ async fn read_until_response(
                 handle_codex_event_notification(
                     &notification.method,
                     notification.params,
+                    recovery,
                     event_tx,
                 )?;
             }
@@ -620,6 +771,181 @@ fn next_request_id(next_id: &mut i64) -> RequestId {
     let id = *next_id;
     *next_id += 1;
     RequestId::Integer(id)
+}
+
+#[cfg(test)]
+mod stream_recovery_tests {
+    use super::*;
+    use codex_protocol::protocol::AgentMessageDeltaEvent;
+    use codex_protocol::protocol::CodexErrorInfo;
+    use codex_protocol::protocol::TurnCompleteEvent;
+    use pretty_assertions::assert_eq;
+
+    fn retryable_error_event() -> ErrorEvent {
+        ErrorEvent {
+            message: "stream disconnected before completion: error sending request for url (...)"
+                .to_string(),
+            codex_error_info: Some(CodexErrorInfo::ResponseStreamDisconnected {
+                http_status_code: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn stream_recovery_translates_retryable_error_to_potter_events() {
+        let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+        let (action_tx, mut action_rx) = unbounded_channel::<RecoveryAction>();
+        let mut recovery = StreamRecoveryContext {
+            stream_recovery: PotterStreamRecovery::new(),
+            recovery_action_tx: action_tx,
+            has_sent_turn_start: true,
+        };
+
+        handle_codex_event(
+            Event {
+                id: "err".into(),
+                msg: EventMsg::Error(retryable_error_event()),
+            },
+            &mut recovery,
+            &event_tx,
+        );
+
+        let event = event_rx.try_recv().expect("expected injected event");
+        let EventMsg::PotterStreamRecoveryUpdate {
+            attempt,
+            max_attempts,
+            error_message,
+        } = event.msg
+        else {
+            panic!("expected PotterStreamRecoveryUpdate, got: {:?}", event.msg);
+        };
+        assert_eq!(attempt, 1);
+        assert_eq!(max_attempts, 10);
+        assert_eq!(
+            error_message,
+            "stream disconnected before completion: error sending request for url (...)"
+        );
+
+        assert!(
+            event_rx.try_recv().is_err(),
+            "expected retryable Error to be suppressed"
+        );
+        assert_eq!(
+            action_rx.try_recv().expect("expected SendContinue action"),
+            RecoveryAction::SendContinue
+        );
+
+        handle_codex_event(
+            Event {
+                id: "turn-complete".into(),
+                msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                    last_agent_message: None,
+                }),
+            },
+            &mut recovery,
+            &event_tx,
+        );
+
+        assert!(
+            event_rx.try_recv().is_err(),
+            "expected empty TurnComplete to be suppressed during retry streak"
+        );
+
+        handle_codex_event(
+            Event {
+                id: "activity".into(),
+                msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+                    delta: "hello".to_string(),
+                }),
+            },
+            &mut recovery,
+            &event_tx,
+        );
+
+        let recovered = event_rx.try_recv().expect("expected recovered event");
+        assert!(matches!(
+            recovered.msg,
+            EventMsg::PotterStreamRecoveryRecovered
+        ));
+
+        let forwarded = event_rx
+            .try_recv()
+            .expect("expected forwarded activity event");
+        assert!(matches!(forwarded.msg, EventMsg::AgentMessageDelta(_)));
+    }
+
+    #[test]
+    fn stream_recovery_ignores_retryable_error_before_first_turn_start() {
+        let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+        let (action_tx, mut action_rx) = unbounded_channel::<RecoveryAction>();
+        let mut recovery = StreamRecoveryContext {
+            stream_recovery: PotterStreamRecovery::new(),
+            recovery_action_tx: action_tx,
+            has_sent_turn_start: false,
+        };
+
+        handle_codex_event(
+            Event {
+                id: "err".into(),
+                msg: EventMsg::Error(retryable_error_event()),
+            },
+            &mut recovery,
+            &event_tx,
+        );
+
+        let event = event_rx.try_recv().expect("expected forwarded error");
+        assert!(matches!(event.msg, EventMsg::Error(_)));
+        assert!(action_rx.try_recv().is_err(), "expected no continue action");
+    }
+
+    #[test]
+    fn stream_recovery_gives_up_after_retry_cap() {
+        let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+        let (action_tx, mut action_rx) = unbounded_channel::<RecoveryAction>();
+        let mut recovery = StreamRecoveryContext {
+            stream_recovery: PotterStreamRecovery::new(),
+            recovery_action_tx: action_tx,
+            has_sent_turn_start: true,
+        };
+
+        let err = retryable_error_event();
+        for _ in 0..10 {
+            let Some(ContinueRetryDecision::Retry(_)) = recovery.stream_recovery.plan_retry(&err)
+            else {
+                panic!("expected retry plan while warming retry streak");
+            };
+        }
+
+        handle_codex_event(
+            Event {
+                id: "err".into(),
+                msg: EventMsg::Error(err),
+            },
+            &mut recovery,
+            &event_tx,
+        );
+
+        let event = event_rx.try_recv().expect("expected injected event");
+        let EventMsg::PotterStreamRecoveryGaveUp {
+            error_message,
+            attempts,
+            max_attempts,
+        } = event.msg
+        else {
+            panic!("expected PotterStreamRecoveryGaveUp, got: {:?}", event.msg);
+        };
+        assert!(error_message.contains("stream disconnected before completion"));
+        assert_eq!((attempts, max_attempts), (10, 10));
+
+        assert!(
+            event_rx.try_recv().is_err(),
+            "expected Error to be suppressed after giving up"
+        );
+        assert!(
+            action_rx.try_recv().is_err(),
+            "expected no continue action after giving up"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -126,6 +126,33 @@ pub enum EventMsg {
         total: u32,
     },
 
+    /// `codex-potter` stream recovery update.
+    ///
+    /// When the model stream disconnects mid-turn and CodexPotter decides to recover by issuing
+    /// a follow-up `continue` prompt, the backend emits this event so the TUI can render a
+    /// reconnecting status without inferring control-plane state.
+    PotterStreamRecoveryUpdate {
+        /// 1-based attempt number within the current continuous-error streak.
+        attempt: u32,
+        /// Maximum number of attempts allowed before giving up.
+        max_attempts: u32,
+        /// The retryable error message that triggered this update.
+        error_message: String,
+    },
+
+    /// `codex-potter` stream recovery finished successfully (activity observed).
+    PotterStreamRecoveryRecovered,
+
+    /// `codex-potter` stream recovery gave up after exhausting retries.
+    PotterStreamRecoveryGaveUp {
+        /// The retryable error message that caused the session to give up.
+        error_message: String,
+        /// Total attempts made within the continuous-error streak.
+        attempts: u32,
+        /// Maximum number of attempts allowed before giving up.
+        max_attempts: u32,
+    },
+
     /// `codex-potter` session finished successfully (outside of the app-server protocol).
     PotterSessionSucceeded {
         /// Total number of rounds rendered for this CodexPotter project.

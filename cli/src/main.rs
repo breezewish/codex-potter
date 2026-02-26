@@ -5,6 +5,7 @@ mod codex_compat;
 mod config;
 mod global_gitignore;
 mod path_utils;
+mod potter_stream_recovery;
 mod project;
 mod prompt_queue;
 mod startup;
