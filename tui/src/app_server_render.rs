@@ -919,6 +919,7 @@ struct RenderAppState {
     queued_user_messages: VecDeque<String>,
     reasoning_status: ReasoningStatusTracker,
     stream_recovery: PotterStreamRecovery,
+    stream_error_status_header: Option<String>,
     retry_status_header: Option<String>,
     commit_anim_running: Arc<AtomicBool>,
     has_emitted_history_lines: bool,
@@ -946,6 +947,7 @@ impl RenderAppState {
             queued_user_messages,
             reasoning_status: ReasoningStatusTracker::new(),
             stream_recovery: PotterStreamRecovery::new(),
+            stream_error_status_header: None,
             retry_status_header: None,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             has_emitted_history_lines: false,
@@ -1336,6 +1338,21 @@ impl RenderAppState {
         frame_requester: crate::tui::FrameRequester,
         event: Event,
     ) -> anyhow::Result<()> {
+        if let EventMsg::StreamError(ev) = &event.msg {
+            if self.stream_error_status_header.is_none() {
+                self.stream_error_status_header =
+                    Some(self.bottom_pane.status_header().to_string());
+            }
+            self.bottom_pane.update_status_header_with_details(
+                ev.message.clone(),
+                ev.additional_details.clone(),
+            );
+            return Ok(());
+        }
+        if let Some(header) = self.stream_error_status_header.take() {
+            self.bottom_pane.update_status_header(header);
+        }
+
         let was_in_retry_streak = self.stream_recovery.is_in_retry_streak();
         self.stream_recovery.observe_event(&event.msg);
         if was_in_retry_streak
@@ -1555,6 +1572,7 @@ mod tests {
     use codex_protocol::protocol::ExecCommandSource;
     use codex_protocol::protocol::PatchApplyEndEvent;
     use codex_protocol::protocol::SessionConfiguredEvent;
+    use codex_protocol::protocol::StreamErrorEvent;
     use codex_protocol::protocol::TokenCountEvent;
     use codex_protocol::protocol::TokenUsageInfo;
     use codex_protocol::protocol::TurnCompleteEvent;
@@ -1812,6 +1830,111 @@ mod tests {
             },
         )
         .expect("handle activity");
+
+        let status = app.bottom_pane.status_widget().expect("status indicator");
+        pretty_assertions::assert_eq!(status.header(), "Inspecting for code duplication");
+        pretty_assertions::assert_eq!(status.details(), None);
+    }
+
+    #[test]
+    fn stream_error_status_updates_and_restores_on_next_event() {
+        let width: u16 = 80;
+
+        let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+
+        let processor = RenderOnlyProcessor::new(app_event_tx.clone());
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
+        bottom_pane.set_task_running(true);
+        bottom_pane.update_status_header("Inspecting for code duplication".to_string());
+        if let Some(status) = bottom_pane.status_indicator_mut() {
+            status.pause_timer_at(Instant::now());
+        }
+        let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
+        let mut app = RenderAppState::new(
+            processor,
+            app_event_tx,
+            op_tx,
+            bottom_pane,
+            crate::prompt_history_store::PromptHistoryStore::new(),
+            file_search,
+            VecDeque::new(),
+        );
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "stream-error-1".into(),
+                msg: EventMsg::StreamError(StreamErrorEvent {
+                    message: "Reconnecting... 1/5".to_string(),
+                    codex_error_info: Some(CodexErrorInfo::ResponseStreamDisconnected {
+                        http_status_code: None,
+                    }),
+                    additional_details: Some(
+                        "stream disconnected before completion: error sending request for url (...)"
+                            .to_string(),
+                    ),
+                }),
+            },
+        )
+        .expect("handle stream error event");
+
+        let status = app.bottom_pane.status_widget().expect("status indicator");
+        pretty_assertions::assert_eq!(status.header(), "Reconnecting... 1/5");
+        pretty_assertions::assert_eq!(
+            status.details(),
+            Some("Stream disconnected before completion: error sending request for url (...)")
+        );
+
+        let cells = drain_history_cell_strings(&mut rx_app, width);
+        assert!(
+            cells.is_empty(),
+            "expected no history cells; got: {cells:?}"
+        );
+        assert!(
+            op_rx.try_recv().is_err(),
+            "expected no Continue op for stream error"
+        );
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "stream-error-2".into(),
+                msg: EventMsg::StreamError(StreamErrorEvent {
+                    message: "Reconnecting... 2/5".to_string(),
+                    codex_error_info: Some(CodexErrorInfo::ResponseStreamDisconnected {
+                        http_status_code: None,
+                    }),
+                    additional_details: Some(
+                        "stream disconnected before completion: error sending request for url (...)"
+                            .to_string(),
+                    ),
+                }),
+            },
+        )
+        .expect("handle stream error event");
+
+        let status = app.bottom_pane.status_widget().expect("status indicator");
+        pretty_assertions::assert_eq!(status.header(), "Reconnecting... 2/5");
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "delta".into(),
+                msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+                    delta: "hello".to_string(),
+                }),
+            },
+        )
+        .expect("handle delta");
 
         let status = app.bottom_pane.status_widget().expect("status indicator");
         pretty_assertions::assert_eq!(status.header(), "Inspecting for code duplication");

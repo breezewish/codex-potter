@@ -62,6 +62,10 @@ pub enum EventMsg {
     /// indicates the turn continued but the user should still be notified.
     Warning(WarningEvent),
 
+    /// Notification that a model stream experienced an error or disconnect and the system is
+    /// handling it (for example retrying with backoff).
+    StreamError(StreamErrorEvent),
+
     /// Conversation history was compacted (either automatically or manually).
     ContextCompacted(ContextCompactedEvent),
 
@@ -197,6 +201,16 @@ pub struct ErrorEvent {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WarningEvent {
     pub message: String,
+}
+
+/// Notification describing a transient stream/network failure while the system is retrying.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StreamErrorEvent {
+    pub message: String,
+    #[serde(default)]
+    pub codex_error_info: Option<CodexErrorInfo>,
+    #[serde(default)]
+    pub additional_details: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -795,6 +809,29 @@ mod tests {
         }))?;
 
         assert!(matches!(event.msg, EventMsg::Unknown));
+        Ok(())
+    }
+
+    #[test]
+    fn stream_error_deserializes() -> Result<()> {
+        let event: Event = serde_json::from_value(json!({
+            "id": "1234",
+            "msg": {
+                "type": "stream_error",
+                "message": "Reconnecting... 1/5",
+                "additional_details": "stream disconnected before completion: error sending request for url (...)",
+            }
+        }))?;
+
+        let EventMsg::StreamError(ev) = event.msg else {
+            panic!("expected stream_error event");
+        };
+
+        assert_eq!(ev.message, "Reconnecting... 1/5");
+        assert_eq!(
+            ev.additional_details.as_deref(),
+            Some("stream disconnected before completion: error sending request for url (...)")
+        );
         Ok(())
     }
 }
