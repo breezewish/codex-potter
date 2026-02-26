@@ -1292,142 +1292,7 @@ impl RenderAppState {
                 self.processor.on_commit_tick();
             }
             AppEvent::CodexEvent(event) => {
-                self.stream_recovery.observe_event(&event.msg);
-
-                match &event.msg {
-                    EventMsg::PotterRoundStarted { current, total } => {
-                        self.bottom_pane
-                            .set_status_header_prefix(Some(format!("Round {current}/{total}")));
-                    }
-                    EventMsg::TurnStarted(_) => {
-                        self.reasoning_status.reset();
-                        self.bottom_pane
-                            .update_status_header(String::from("Working"));
-                    }
-                    EventMsg::AgentReasoningDelta(ev) => {
-                        if let Some(header) = self.reasoning_status.on_delta(&ev.delta) {
-                            self.bottom_pane.update_status_header(header);
-                        }
-                        return Ok(());
-                    }
-                    EventMsg::AgentReasoningRawContentDelta(ev) => {
-                        if let Some(header) = self.reasoning_status.on_delta(&ev.delta) {
-                            self.bottom_pane.update_status_header(header);
-                        }
-                        return Ok(());
-                    }
-                    EventMsg::AgentReasoningSectionBreak(_) => {
-                        self.reasoning_status.on_section_break();
-                        return Ok(());
-                    }
-                    EventMsg::AgentReasoning(_) => {
-                        self.reasoning_status.on_final();
-                        return Ok(());
-                    }
-                    EventMsg::AgentReasoningRawContent(ev) => {
-                        if let Some(header) = self.reasoning_status.on_delta(&ev.text) {
-                            self.bottom_pane.update_status_header(header);
-                        }
-                        self.reasoning_status.on_final();
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-
-                if should_filter_thinking_event(&event.msg) {
-                    return Ok(());
-                }
-
-                let retry_decision = match &event.msg {
-                    EventMsg::Error(err) => self.stream_recovery.plan_retry(err),
-                    _ => None,
-                };
-                let is_retrying = matches!(&retry_decision, Some(ContinueRetryDecision::Retry(_)));
-                let should_suppress_retryable_error =
-                    is_retrying && matches!(&event.msg, EventMsg::Error(_));
-
-                let should_exit_on_turn_end =
-                    self.stream_recovery.should_exit_on_turn_end(&event.msg);
-                let should_stop_footer = match &event.msg {
-                    EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_) => should_exit_on_turn_end,
-                    EventMsg::Error(_) => !is_retrying,
-                    _ => false,
-                };
-                let should_update_context = matches!(
-                    event.msg,
-                    EventMsg::TokenCount(_) | EventMsg::TurnStarted(_)
-                );
-                let should_redraw_after_event = matches!(event.msg, EventMsg::ExecCommandEnd(_));
-
-                match (&event.msg, retry_decision) {
-                    (EventMsg::TurnComplete(_), _) if should_exit_on_turn_end => {
-                        self.exit_reason = ExitReason::Completed;
-                        self.exit_after_next_draw = true;
-                        tui.frame_requester().schedule_frame();
-                    }
-                    (EventMsg::TurnAborted(_), _) if should_exit_on_turn_end => {
-                        self.exit_reason = ExitReason::UserRequested;
-                        self.exit_after_next_draw = true;
-                        tui.frame_requester().schedule_frame();
-                    }
-                    (EventMsg::Error(ev), Some(ContinueRetryDecision::Retry(plan))) => {
-                        self.bottom_pane.update_status_header_with_details(
-                            format!("Reconnecting... {}/{}", plan.attempt, plan.max_attempts),
-                            Some(ev.message.clone()),
-                        );
-                        let op = text_user_input_op(String::from("Continue"));
-                        if plan.backoff.is_zero() {
-                            let _ = self.codex_op_tx.send(op);
-                        } else {
-                            let op_tx = self.codex_op_tx.clone();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(plan.backoff).await;
-                                let _ = op_tx.send(op);
-                            });
-                        }
-                    }
-                    (
-                        EventMsg::Error(ev),
-                        Some(ContinueRetryDecision::GiveUp { max_attempts, .. }),
-                    ) => {
-                        // The error itself is rendered into the transcript; return a task-failed
-                        // exit reason so callers can skip remaining rounds without duplicating
-                        // the message.
-                        self.exit_reason = ExitReason::TaskFailed(format!(
-                            "{} (stream recovery gave up after {max_attempts} retries)",
-                            ev.message
-                        ));
-                        self.exit_after_next_draw = true;
-                        tui.frame_requester().schedule_frame();
-                    }
-                    (EventMsg::Error(ev), None) => {
-                        // The error itself is rendered into the transcript; return a fatal exit
-                        // reason so callers can exit non-zero without duplicating the message.
-                        self.exit_reason = ExitReason::Fatal(ev.message.clone());
-                        self.exit_after_next_draw = true;
-                        tui.frame_requester().schedule_frame();
-                    }
-                    _ => {}
-                }
-
-                self.processor.current_elapsed_secs = self
-                    .bottom_pane
-                    .status_widget()
-                    .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
-                if should_suppress_retryable_error {
-                    self.processor.handle_retryable_stream_error();
-                } else {
-                    self.processor.handle_codex_event(event);
-                }
-                if should_update_context {
-                    self.update_bottom_pane_context_window();
-                }
-                if should_redraw_after_event {
-                    tui.frame_requester().schedule_frame();
-                }
-                if should_stop_footer {
-                    self.bottom_pane.set_task_running(false);
-                }
+                self.handle_codex_event(tui.frame_requester(), event)?;
             }
             AppEvent::CodexOp(op) => match op {
                 Op::GetHistoryEntryRequest { offset, log_id } => {
@@ -1459,6 +1324,147 @@ impl RenderAppState {
                 self.exit_after_next_draw = true;
                 tui.frame_requester().schedule_frame();
             }
+        }
+
+        Ok(())
+    }
+
+    fn handle_codex_event(
+        &mut self,
+        frame_requester: crate::tui::FrameRequester,
+        event: Event,
+    ) -> anyhow::Result<()> {
+        self.stream_recovery.observe_event(&event.msg);
+
+        match &event.msg {
+            EventMsg::PotterRoundStarted { current, total } => {
+                self.bottom_pane
+                    .set_status_header_prefix(Some(format!("Round {current}/{total}")));
+            }
+            EventMsg::TurnStarted(_) => {
+                self.reasoning_status.reset();
+                self.bottom_pane
+                    .update_status_header(String::from("Working"));
+            }
+            EventMsg::AgentReasoningDelta(ev) => {
+                if let Some(header) = self.reasoning_status.on_delta(&ev.delta) {
+                    self.bottom_pane.update_status_header(header);
+                }
+                return Ok(());
+            }
+            EventMsg::AgentReasoningRawContentDelta(ev) => {
+                if let Some(header) = self.reasoning_status.on_delta(&ev.delta) {
+                    self.bottom_pane.update_status_header(header);
+                }
+                return Ok(());
+            }
+            EventMsg::AgentReasoningSectionBreak(_) => {
+                self.reasoning_status.on_section_break();
+                return Ok(());
+            }
+            EventMsg::AgentReasoning(_) => {
+                self.reasoning_status.on_final();
+                return Ok(());
+            }
+            EventMsg::AgentReasoningRawContent(ev) => {
+                if let Some(header) = self.reasoning_status.on_delta(&ev.text) {
+                    self.bottom_pane.update_status_header(header);
+                }
+                self.reasoning_status.on_final();
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        if should_filter_thinking_event(&event.msg) {
+            return Ok(());
+        }
+
+        let retry_decision = match &event.msg {
+            EventMsg::Error(err) => self.stream_recovery.plan_retry(err),
+            _ => None,
+        };
+        let is_retrying = matches!(&retry_decision, Some(ContinueRetryDecision::Retry(_)));
+        let should_suppress_retryable_error =
+            is_retrying && matches!(&event.msg, EventMsg::Error(_));
+
+        let should_exit_on_turn_end = self.stream_recovery.should_exit_on_turn_end(&event.msg);
+        let should_stop_footer = match &event.msg {
+            EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_) => should_exit_on_turn_end,
+            EventMsg::Error(_) => !is_retrying,
+            _ => false,
+        };
+        let should_update_context = matches!(
+            event.msg,
+            EventMsg::TokenCount(_) | EventMsg::TurnStarted(_)
+        );
+        let should_redraw_after_event = matches!(event.msg, EventMsg::ExecCommandEnd(_));
+
+        match (&event.msg, retry_decision) {
+            (EventMsg::TurnComplete(_), _) if should_exit_on_turn_end => {
+                self.exit_reason = ExitReason::Completed;
+                self.exit_after_next_draw = true;
+                frame_requester.schedule_frame();
+            }
+            (EventMsg::TurnAborted(_), _) if should_exit_on_turn_end => {
+                self.exit_reason = ExitReason::UserRequested;
+                self.exit_after_next_draw = true;
+                frame_requester.schedule_frame();
+            }
+            (EventMsg::Error(ev), Some(ContinueRetryDecision::Retry(plan))) => {
+                self.bottom_pane.update_status_header_with_details(
+                    format!("Reconnecting... {}/{}", plan.attempt, plan.max_attempts),
+                    Some(ev.message.clone()),
+                );
+                let op = text_user_input_op(String::from("Continue"));
+                if plan.backoff.is_zero() {
+                    let _ = self.codex_op_tx.send(op);
+                } else {
+                    let op_tx = self.codex_op_tx.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(plan.backoff).await;
+                        let _ = op_tx.send(op);
+                    });
+                }
+            }
+            (EventMsg::Error(ev), Some(ContinueRetryDecision::GiveUp { max_attempts, .. })) => {
+                // The error itself is rendered into the transcript; return a task-failed
+                // exit reason so callers can skip remaining rounds without duplicating
+                // the message.
+                self.exit_reason = ExitReason::TaskFailed(format!(
+                    "{} (stream recovery gave up after {max_attempts} retries)",
+                    ev.message
+                ));
+                self.exit_after_next_draw = true;
+                frame_requester.schedule_frame();
+            }
+            (EventMsg::Error(ev), None) => {
+                // The error itself is rendered into the transcript; return a fatal exit
+                // reason so callers can exit non-zero without duplicating the message.
+                self.exit_reason = ExitReason::Fatal(ev.message.clone());
+                self.exit_after_next_draw = true;
+                frame_requester.schedule_frame();
+            }
+            _ => {}
+        }
+
+        self.processor.current_elapsed_secs = self
+            .bottom_pane
+            .status_widget()
+            .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
+        if should_suppress_retryable_error {
+            self.processor.handle_retryable_stream_error();
+        } else {
+            self.processor.handle_codex_event(event);
+        }
+        if should_update_context {
+            self.update_bottom_pane_context_window();
+        }
+        if should_redraw_after_event {
+            frame_requester.schedule_frame();
+        }
+        if should_stop_footer {
+            self.bottom_pane.set_task_running(false);
         }
 
         Ok(())
@@ -1528,7 +1534,9 @@ mod tests {
     use codex_protocol::parse_command::ParsedCommand;
     use codex_protocol::protocol::AgentMessageDeltaEvent;
     use codex_protocol::protocol::AgentMessageEvent;
+    use codex_protocol::protocol::CodexErrorInfo;
     use codex_protocol::protocol::ContextCompactedEvent;
+    use codex_protocol::protocol::ErrorEvent;
     use codex_protocol::protocol::ExecCommandEndEvent;
     use codex_protocol::protocol::ExecCommandSource;
     use codex_protocol::protocol::PatchApplyEndEvent;
@@ -1685,6 +1693,207 @@ mod tests {
 
         let status = bottom_pane.status_widget().expect("status indicator");
         assert_eq!(status.header(), "Inspecting for code duplication");
+    }
+
+    #[test]
+    fn retryable_error_updates_status_and_suppresses_error_history_cell() {
+        let width: u16 = 80;
+
+        let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+
+        let processor = RenderOnlyProcessor::new(app_event_tx.clone());
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
+        bottom_pane.set_task_running(true);
+        if let Some(status) = bottom_pane.status_indicator_mut() {
+            status.pause_timer_at(Instant::now());
+        }
+        let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
+        let mut app = RenderAppState::new(
+            processor,
+            app_event_tx,
+            op_tx,
+            bottom_pane,
+            crate::prompt_history_store::PromptHistoryStore::new(),
+            file_search,
+            VecDeque::new(),
+        );
+
+        let message = "stream disconnected before completion: error sending request for url (...)"
+            .to_string();
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "err".into(),
+                msg: EventMsg::Error(ErrorEvent {
+                    message,
+                    codex_error_info: Some(CodexErrorInfo::ResponseStreamDisconnected {
+                        http_status_code: None,
+                    }),
+                }),
+            },
+        )
+        .expect("handle codex event");
+
+        let status = app.bottom_pane.status_widget().expect("status indicator");
+        pretty_assertions::assert_eq!(status.header(), "Reconnecting... 1/10");
+        pretty_assertions::assert_eq!(
+            status.details(),
+            Some("Stream disconnected before completion: error sending request for url (...)")
+        );
+
+        let cells = drain_history_cell_strings(&mut rx_app, width);
+        assert!(
+            cells.is_empty(),
+            "expected no history cells; got: {cells:?}"
+        );
+
+        let op = op_rx.try_recv().expect("expected immediate Continue op");
+        pretty_assertions::assert_eq!(
+            op,
+            Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "Continue".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            }
+        );
+    }
+
+    #[test]
+    fn non_retryable_error_inserts_error_history_cell() {
+        let width: u16 = 80;
+
+        let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+
+        let processor = RenderOnlyProcessor::new(app_event_tx.clone());
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
+        bottom_pane.set_task_running(true);
+        let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
+        let mut app = RenderAppState::new(
+            processor,
+            app_event_tx,
+            op_tx,
+            bottom_pane,
+            crate::prompt_history_store::PromptHistoryStore::new(),
+            file_search,
+            VecDeque::new(),
+        );
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "err".into(),
+                msg: EventMsg::Error(ErrorEvent {
+                    message: "unauthorized".to_string(),
+                    codex_error_info: Some(CodexErrorInfo::Unauthorized),
+                }),
+            },
+        )
+        .expect("handle codex event");
+
+        let cells = drain_history_cell_strings(&mut rx_app, width);
+        pretty_assertions::assert_eq!(cells.len(), 1);
+        let blob = cells[0].join("\n");
+        assert!(
+            blob.contains("■ unauthorized"),
+            "unexpected error cell: {blob:?}"
+        );
+
+        assert!(
+            op_rx.try_recv().is_err(),
+            "expected no Continue op for non-retryable errors"
+        );
+    }
+
+    #[test]
+    fn retryable_error_gives_up_after_retry_cap_and_inserts_error_cell() {
+        let width: u16 = 80;
+
+        let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+
+        let processor = RenderOnlyProcessor::new(app_event_tx.clone());
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
+        bottom_pane.set_task_running(true);
+        let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
+        let mut app = RenderAppState::new(
+            processor,
+            app_event_tx,
+            op_tx,
+            bottom_pane,
+            crate::prompt_history_store::PromptHistoryStore::new(),
+            file_search,
+            VecDeque::new(),
+        );
+
+        let err = ErrorEvent {
+            message: "stream disconnected before completion: error sending request for url (...)"
+                .to_string(),
+            codex_error_info: Some(CodexErrorInfo::ResponseStreamDisconnected {
+                http_status_code: None,
+            }),
+        };
+        for _ in 0..10 {
+            let Some(ContinueRetryDecision::Retry(_)) = app.stream_recovery.plan_retry(&err) else {
+                panic!("expected retry plan while warming retry streak");
+            };
+        }
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "err".into(),
+                msg: EventMsg::Error(err),
+            },
+        )
+        .expect("handle codex event");
+
+        assert!(
+            matches!(app.exit_reason, ExitReason::TaskFailed(_)),
+            "expected TaskFailed exit reason; got: {:?}",
+            app.exit_reason
+        );
+        assert!(app.exit_after_next_draw, "expected app to request exit");
+
+        let cells = drain_history_cell_strings(&mut rx_app, width);
+        pretty_assertions::assert_eq!(cells.len(), 1);
+        let blob = cells[0].join("\n");
+        assert!(
+            blob.contains("■ stream disconnected before completion"),
+            "unexpected error cell: {blob:?}"
+        );
+
+        assert!(
+            op_rx.try_recv().is_err(),
+            "expected no Continue op after giving up"
+        );
     }
 
     #[test]

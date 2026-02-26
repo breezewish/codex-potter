@@ -101,6 +101,11 @@ impl StatusIndicatorWidget {
         &self.header
     }
 
+    #[cfg(test)]
+    pub fn details(&self) -> Option<&str> {
+        self.details.as_deref()
+    }
+
     pub fn set_context_window_percent(&mut self, percent: Option<i64>) {
         self.context_window_percent = percent;
     }
