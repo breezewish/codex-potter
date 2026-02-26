@@ -47,7 +47,7 @@ The rules below are some typical principles. They are not exhaustive, and you mu
 ## Upstream Maintaining
 
 TUI crate is supposed to be a subset of upstream codex's TUI crate, and you must keep it as close as possible to the upstream's codebase, so that we can easily sync from upstream and reduce merge conflicts.
-tui/AGENTS.md describes intended divergences in behavior and code between codex-potter and upstream code.
+tui/AGENTS.md describes intended divergences in behavior and code between codex-potter and upstream code. tui/AGENTS.md also describes other conventions for TUI code and tests. You must follow them strictly when working on TUI code.
 
 If not specified, upstream codex should be available at `../codex` relative to this repo.
 

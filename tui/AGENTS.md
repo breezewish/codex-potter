@@ -46,6 +46,8 @@ Unless explicitly documented below, changes should preserve parity.
 
 ### Convensions
 
+- TUI is stateless, should be fully driven by `EventMsg`. Codex-potter has some customized rendering logic, and they are all converted into customized `EventMsg` variants (prefixed with `Potter`), so that TUI is kept as a pure rendering module without any special logic for codex-potter.
+
 - Test: Always use snapshot tests (without ASCII escape sequences) for TUI rendering tests, so that it is visually clear what the output looks like, unless the test or code comes from upstream codex where non-snapshot tests are used, in which case you must preserve parity.
 
 - IMPORTANT: Isolate divergent code paths: Prefer to use a new file to isolate changed logic from upstream codex, and keep the original file as a subset of the upstream's file, if the changed logic is significant. In this way, we can easily learn what has changed from upstream, and reduce merge conflicts when syncing from upstream.
