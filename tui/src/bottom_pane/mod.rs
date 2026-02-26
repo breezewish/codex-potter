@@ -147,8 +147,12 @@ impl BottomPane {
     }
 
     pub fn update_status_header(&mut self, header: String) {
+        self.update_status_header_with_details(header, None);
+    }
+
+    pub fn update_status_header_with_details(&mut self, header: String, details: Option<String>) {
         self.status_header = header;
-        self.status_details = None;
+        self.status_details = details.filter(|details| !details.trim().is_empty());
 
         if let Some(status) = self.status.as_mut() {
             status.update_header_prefix(self.status_header_prefix.clone());

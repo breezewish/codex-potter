@@ -44,6 +44,13 @@ The rules below are some typical principles. They are not exhaustive, and you mu
 - IMPORTANT: When working with `tui/`, must follow conventions in `tui/AGENTS.md` strictly.
 - Run `cargo fmt` and `cargo clippy` before committing code.
 
+## Upstream Maintaining
+
+TUI crate is supposed to be a subset of upstream codex's TUI crate, and you must keep it as close as possible to the upstream's codebase, so that we can easily sync from upstream and reduce merge conflicts.
+tui/AGENTS.md describes intended divergences in behavior and code between codex-potter and upstream code.
+
+If not specified, upstream codex should be available at `../codex` relative to this repo.
+
 ## Tests
 
 ### Snapshot tests

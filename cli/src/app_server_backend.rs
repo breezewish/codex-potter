@@ -29,7 +29,6 @@ use crate::app_server_protocol::TurnStartResponse;
 use crate::app_server_protocol::UserInput as ApiUserInput;
 use anyhow::Context;
 use codex_protocol::ThreadId;
-use codex_protocol::potter_stream_recovery;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -72,11 +71,6 @@ impl AppServerLaunchConfig {
             bypass_approvals_and_sandbox: false,
         }
     }
-}
-
-#[derive(Debug, Default)]
-struct BackendMessageState {
-    turn_complete_seen: bool,
 }
 
 pub async fn run_app_server_backend(
@@ -169,7 +163,7 @@ async fn run_app_server_backend_inner(
     let mut stdin = Some(stdin);
     let mut lines = BufReader::new(stdout).lines();
     let mut next_id: i64 = 1;
-    let mut message_state = BackendMessageState::default();
+    let mut shutdown_requested = false;
 
     let result = async {
         initialize_app_server(
@@ -179,7 +173,6 @@ async fn run_app_server_backend_inner(
             &mut lines,
             &mut next_id,
             event_tx,
-            &mut message_state,
         )
         .await?;
 
@@ -194,7 +187,6 @@ async fn run_app_server_backend_inner(
                 sandbox_mode: launch.thread_sandbox,
             },
             event_tx,
-            &mut message_state,
         )
         .await?;
         let thread_id = thread_start.thread.id.clone();
@@ -207,9 +199,9 @@ async fn run_app_server_backend_inner(
 
         loop {
             tokio::select! {
-                maybe_op = op_rx.recv(), if !message_state.turn_complete_seen => {
+                maybe_op = op_rx.recv(), if !shutdown_requested => {
                     let Some(op) = maybe_op else {
-                        message_state.turn_complete_seen = true;
+                        shutdown_requested = true;
                         stdin.take();
                         continue;
                     };
@@ -220,7 +212,6 @@ async fn run_app_server_backend_inner(
                         &mut lines,
                         &mut next_id,
                         event_tx,
-                        &mut message_state,
                     )
                     .await?;
                 }
@@ -230,17 +221,7 @@ async fn run_app_server_backend_inner(
                     };
                     let msg: JSONRPCMessage = serde_json::from_str(&line)
                         .with_context(|| format!("failed to decode app-server message: {line}"))?;
-                    if handle_app_server_message(
-                        msg,
-                        &mut stdin,
-                        event_tx,
-                        &mut message_state,
-                    )
-                    .await?
-                    {
-                        // turn completed; request the server exit by closing stdin.
-                        stdin.take();
-                    }
+                    handle_app_server_message(msg, &mut stdin, event_tx).await?;
                 }
             }
         }
@@ -285,8 +266,8 @@ async fn run_app_server_backend_inner(
         anyhow::Error::msg(message)
     })?;
 
-    // If the backend finishes without a TurnComplete, ensure the UI can still exit.
-    if !message_state.turn_complete_seen {
+    // If the backend finishes while the UI still expects it to be alive, ensure the UI can exit.
+    if !shutdown_requested {
         let message = "codex app-server exited unexpectedly".to_string();
         let _ = event_tx.send(Event {
             id: "".to_string(),
@@ -353,7 +334,6 @@ async fn initialize_app_server(
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     next_id: &mut i64,
     event_tx: &UnboundedSender<Event>,
-    message_state: &mut BackendMessageState,
 ) -> anyhow::Result<()> {
     let request_id = next_request_id(next_id);
     let request = ClientRequest::Initialize {
@@ -367,7 +347,7 @@ async fn initialize_app_server(
         },
     };
     send_message(stdin, &request).await?;
-    let _response = read_until_response(stdin, lines, request_id, event_tx, message_state).await?;
+    let _response = read_until_response(stdin, lines, request_id, event_tx).await?;
 
     send_message(stdin, &ClientNotification::Initialized).await?;
     Ok(())
@@ -384,7 +364,6 @@ async fn thread_start(
     next_id: &mut i64,
     settings: ThreadStartSettings,
     event_tx: &UnboundedSender<Event>,
-    message_state: &mut BackendMessageState,
 ) -> anyhow::Result<ThreadStartResponse> {
     let ThreadStartSettings {
         developer_instructions,
@@ -406,7 +385,7 @@ async fn thread_start(
         },
     };
     send_message(stdin, &request).await?;
-    let response = read_until_response(stdin, lines, request_id, event_tx, message_state).await?;
+    let response = read_until_response(stdin, lines, request_id, event_tx).await?;
     serde_json::from_value(response.result).context("decode thread/start response")
 }
 
@@ -417,7 +396,6 @@ async fn handle_op(
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     next_id: &mut i64,
     event_tx: &UnboundedSender<Event>,
-    message_state: &mut BackendMessageState,
 ) -> anyhow::Result<()> {
     match op {
         Op::UserInput {
@@ -442,8 +420,7 @@ async fn handle_op(
                 },
             };
             send_message(stdin, &request).await?;
-            let response =
-                read_until_response(stdin, lines, request_id, event_tx, message_state).await?;
+            let response = read_until_response(stdin, lines, request_id, event_tx).await?;
             let _parsed: TurnStartResponse =
                 serde_json::from_value(response.result).context("decode turn/start response")?;
             Ok(())
@@ -465,16 +442,10 @@ async fn handle_app_server_message(
     msg: JSONRPCMessage,
     stdin: &mut Option<ChildStdin>,
     event_tx: &UnboundedSender<Event>,
-    message_state: &mut BackendMessageState,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<()> {
     match msg {
         JSONRPCMessage::Notification(notification) => {
-            handle_codex_event_notification(
-                &notification.method,
-                notification.params,
-                event_tx,
-                message_state,
-            )?;
+            handle_codex_event_notification(&notification.method, notification.params, event_tx)?;
         }
         JSONRPCMessage::Request(request) => {
             if let Some(stdin) = stdin.as_mut() {
@@ -484,14 +455,13 @@ async fn handle_app_server_message(
         JSONRPCMessage::Response(_) | JSONRPCMessage::Error(_) => {}
     }
 
-    Ok(message_state.turn_complete_seen)
+    Ok(())
 }
 
 fn handle_codex_event_notification(
     method: &str,
     params: Option<serde_json::Value>,
     event_tx: &UnboundedSender<Event>,
-    message_state: &mut BackendMessageState,
 ) -> anyhow::Result<()> {
     if !method.starts_with("codex/event/") {
         return Ok(());
@@ -501,17 +471,6 @@ fn handle_codex_event_notification(
     };
 
     let event: Event = serde_json::from_value(params)?;
-    match &event.msg {
-        EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_) => {
-            message_state.turn_complete_seen = true;
-        }
-        EventMsg::Error(err) => {
-            if !potter_stream_recovery::is_retryable_stream_error(err) {
-                message_state.turn_complete_seen = true;
-            }
-        }
-        _ => {}
-    }
     let _ = event_tx.send(event);
     Ok(())
 }
@@ -606,7 +565,6 @@ async fn read_until_response(
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     request_id: RequestId,
     event_tx: &UnboundedSender<Event>,
-    message_state: &mut BackendMessageState,
 ) -> anyhow::Result<JSONRPCResponse> {
     loop {
         let Some(line) = lines.next_line().await? else {
@@ -628,7 +586,6 @@ async fn read_until_response(
                     &notification.method,
                     notification.params,
                     event_tx,
-                    message_state,
                 )?;
             }
             JSONRPCMessage::Request(request) => {
@@ -668,82 +625,144 @@ fn next_request_id(next_id: &mut i64) -> RequestId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::protocol::CodexErrorInfo;
     use codex_protocol::protocol::TurnCompleteEvent;
+    use codex_protocol::user_input::UserInput;
     use tokio::sync::mpsc::unbounded_channel;
     use tokio::time::Duration;
     use tokio::time::timeout;
 
-    #[test]
-    fn turn_complete_sets_turn_complete_seen() {
-        let (event_tx, _event_rx) = unbounded_channel::<Event>();
-        let mut state = BackendMessageState::default();
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn backend_allows_another_turn_after_turn_complete() {
+        use std::os::unix::fs::PermissionsExt;
 
-        let event = Event {
-            id: "1".to_string(),
-            msg: EventMsg::TurnComplete(TurnCompleteEvent {
-                last_agent_message: Some("ok".to_string()),
-            }),
-        };
-        handle_codex_event_notification(
-            "codex/event/test",
-            Some(serde_json::to_value(event).expect("serialize event")),
-            &event_tx,
-            &mut state,
-        )
-        .expect("handle event");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let codex_bin = temp.path().join("dummy-codex");
+        let marker = temp.path().join("saw-second-turn-start");
 
-        assert!(state.turn_complete_seen);
-    }
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
 
-    #[test]
-    fn retryable_error_does_not_set_turn_complete_seen() {
-        let (event_tx, _event_rx) = unbounded_channel::<Event>();
-        let mut state = BackendMessageState::default();
+MARKER="{marker}"
 
-        let event = Event {
-            id: "1".to_string(),
-            msg: EventMsg::Error(ErrorEvent {
-                message:
-                    "stream disconnected before completion: error sending request for url (...)"
-                        .to_string(),
-                codex_error_info: Some(CodexErrorInfo::ResponseStreamDisconnected {
-                    http_status_code: None,
-                }),
-            }),
-        };
-        handle_codex_event_notification(
-            "codex/event/test",
-            Some(serde_json::to_value(event).expect("serialize event")),
-            &event_tx,
-            &mut state,
-        )
-        .expect("handle event");
+if [[ "${{1:-}}" != "app-server" ]]; then
+  echo "expected app-server, got: $*" >&2
+  exit 1
+fi
 
-        assert!(!state.turn_complete_seen);
-    }
+# initialize request
+IFS= read -r _line
+echo '{{"id":1,"result":{{}}}}'
 
-    #[test]
-    fn non_retryable_error_sets_turn_complete_seen() {
-        let (event_tx, _event_rx) = unbounded_channel::<Event>();
-        let mut state = BackendMessageState::default();
+# initialized notification
+IFS= read -r _line
 
-        let event = Event {
-            id: "1".to_string(),
-            msg: EventMsg::Error(ErrorEvent {
-                message: "unauthorized".to_string(),
-                codex_error_info: Some(CodexErrorInfo::Unauthorized),
-            }),
-        };
-        handle_codex_event_notification(
-            "codex/event/test",
-            Some(serde_json::to_value(event).expect("serialize event")),
-            &event_tx,
-            &mut state,
-        )
-        .expect("handle event");
+# thread/start request
+IFS= read -r _line
+echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","path":"rollout.jsonl"}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"readOnly"}},"reasoningEffort":null}}}}'
 
-        assert!(state.turn_complete_seen);
+# first turn/start request
+IFS= read -r _line
+echo '{{"id":3,"result":{{}}}}'
+
+# signal completion for the first turn
+echo '{{"method":"codex/event/test","params":{{"id":"1","msg":{{"type":"turn_complete","last_agent_message":null}}}}}}'
+
+# second turn/start request (should still be accepted)
+IFS= read -r _line
+touch "$MARKER"
+echo '{{"id":4,"result":{{}}}}'
+
+# Wait for the client to close stdin to request shutdown.
+while IFS= read -r _line; do
+  :
+done
+"#,
+            marker = marker.display()
+        );
+
+        std::fs::write(&codex_bin, script).expect("write dummy codex");
+        let mut perms = std::fs::metadata(&codex_bin)
+            .expect("stat dummy codex")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex_bin, perms).expect("chmod dummy codex");
+
+        let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+        let (fatal_exit_tx, _fatal_exit_rx) = unbounded_channel::<String>();
+
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let backend = tokio::spawn(async move {
+            run_app_server_backend_inner(
+                codex_bin.display().to_string(),
+                None,
+                AppServerLaunchConfig {
+                    spawn_sandbox: None,
+                    thread_sandbox: None,
+                    bypass_approvals_and_sandbox: false,
+                },
+                None,
+                &mut op_rx,
+                &event_tx,
+                &fatal_exit_tx,
+            )
+            .await
+        });
+
+        op_tx
+            .send(Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            })
+            .expect("send user input");
+
+        let saw_turn_complete = timeout(Duration::from_secs(5), async {
+            let mut observed = false;
+            while let Some(event) = event_rx.recv().await {
+                if matches!(event.msg, EventMsg::TurnComplete(TurnCompleteEvent { .. })) {
+                    observed = true;
+                    break;
+                }
+            }
+            observed
+        })
+        .await;
+        assert_eq!(saw_turn_complete, Ok(true), "did not observe TurnComplete");
+
+        op_tx
+            .send(Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "Continue".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            })
+            .expect("send second user input");
+
+        timeout(Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("timed out waiting for dummy server marker");
+
+        drop(op_tx);
+
+        timeout(Duration::from_secs(5), backend)
+            .await
+            .expect("backend timed out")
+            .expect("backend panicked")
+            .expect("backend failed");
+
+        assert!(
+            marker.exists(),
+            "dummy server did not observe second turn/start"
+        );
     }
 
     #[cfg(unix)]

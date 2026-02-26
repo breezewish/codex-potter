@@ -12,5 +12,8 @@ pub struct AppExitInfo {
 pub enum ExitReason {
     Completed,
     UserRequested,
+    /// The current task failed, but the CodexPotter session can continue with the next queued
+    /// task.
+    TaskFailed(String),
     Fatal(String),
 }

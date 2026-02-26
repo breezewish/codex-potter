@@ -10,6 +10,7 @@ use std::time::Duration;
 use codex_protocol::potter_stream_recovery as protocol_recovery;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::TurnAbortReason;
 
 const MAX_CONTINUE_RETRIES: u32 = 10;
 
@@ -40,6 +41,28 @@ impl PotterStreamRecovery {
     pub fn new() -> Self {
         Self {
             continue_sends_since_activity: 0,
+        }
+    }
+
+    /// Returns `true` when CodexPotter is still in a continuous-error retry streak.
+    ///
+    /// While in this state, the current round should stay alive even if Codex emits a
+    /// `TurnComplete` event, because the turn may have ended due to a transient stream/network
+    /// failure and the client will retry via follow-up `continue` prompts.
+    pub fn is_in_retry_streak(&self) -> bool {
+        self.continue_sends_since_activity > 0
+    }
+
+    /// Returns `true` when `msg` ends the current turn and the round should exit.
+    ///
+    /// When CodexPotter is in a retry streak, `TurnComplete` may correspond to a transient
+    /// network/stream failure and should be suppressed so the follow-up `continue` turns can
+    /// run within the same round.
+    pub fn should_exit_on_turn_end(&self, msg: &EventMsg) -> bool {
+        match msg {
+            EventMsg::TurnComplete(_) => !self.is_in_retry_streak(),
+            EventMsg::TurnAborted(ev) => !matches!(ev.reason, TurnAbortReason::Replaced),
+            _ => false,
         }
     }
 
@@ -85,6 +108,9 @@ mod tests {
     use super::*;
     use codex_protocol::protocol::AgentMessageDeltaEvent;
     use codex_protocol::protocol::CodexErrorInfo;
+    use codex_protocol::protocol::TurnAbortReason;
+    use codex_protocol::protocol::TurnAbortedEvent;
+    use codex_protocol::protocol::TurnCompleteEvent;
     use pretty_assertions::assert_eq;
 
     fn retryable_error_event() -> ErrorEvent {
@@ -176,5 +202,51 @@ mod tests {
             panic!("expected give up decision");
         };
         assert_eq!((attempts, max_attempts), (10, 10));
+    }
+
+    #[test]
+    fn should_exit_on_turn_end_suppresses_turn_complete_during_retry_streak() {
+        let mut state = PotterStreamRecovery::new();
+        let err = retryable_error_event();
+
+        let Some(ContinueRetryDecision::Retry(_)) = state.plan_retry(&err) else {
+            panic!("expected retry plan");
+        };
+        assert!(state.is_in_retry_streak());
+
+        assert!(
+            !state.should_exit_on_turn_end(&EventMsg::TurnComplete(TurnCompleteEvent {
+                last_agent_message: None,
+            }))
+        );
+
+        // Receiving an inline final message counts as activity and resets the streak.
+        state.observe_event(&EventMsg::TurnComplete(TurnCompleteEvent {
+            last_agent_message: Some("done".to_string()),
+        }));
+        assert!(!state.is_in_retry_streak());
+
+        assert!(
+            state.should_exit_on_turn_end(&EventMsg::TurnComplete(TurnCompleteEvent {
+                last_agent_message: Some("done".to_string()),
+            }))
+        );
+    }
+
+    #[test]
+    fn should_exit_on_turn_end_ignores_replaced_abort_reason() {
+        let state = PotterStreamRecovery::new();
+
+        assert!(
+            !state.should_exit_on_turn_end(&EventMsg::TurnAborted(TurnAbortedEvent {
+                reason: TurnAbortReason::Replaced,
+            }))
+        );
+
+        assert!(
+            state.should_exit_on_turn_end(&EventMsg::TurnAborted(TurnAbortedEvent {
+                reason: TurnAbortReason::Interrupted,
+            }))
+        );
     }
 }

@@ -257,6 +257,13 @@ async fn main() -> anyhow::Result<()> {
                     let _ = forwarder.await;
                     break 'session;
                 }
+                ExitReason::TaskFailed(_) => {
+                    backend.abort();
+                    forwarder.abort();
+                    let _ = backend.await;
+                    let _ = forwarder.await;
+                    break;
+                }
                 ExitReason::Fatal(_) => {
                     backend.abort();
                     forwarder.abort();

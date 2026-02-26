@@ -546,6 +546,17 @@ impl RenderOnlyProcessor {
         }
     }
 
+    fn handle_retryable_stream_error(&mut self) {
+        self.flush_pending_exploring_cell();
+        self.flush_pending_success_ran_cell();
+        if let Some(cell) = self.stream.finalize() {
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+        }
+        self.app_event_tx.send(AppEvent::StopCommitAnimation);
+        self.saw_agent_delta = false;
+        self.needs_final_message_separator = true;
+    }
+
     fn emit_user_prompt(&self, prompt: String) {
         self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
             history_cell::new_user_prompt(prompt),
@@ -1332,12 +1343,16 @@ impl RenderAppState {
                     _ => None,
                 };
                 let is_retrying = matches!(&retry_decision, Some(ContinueRetryDecision::Retry(_)));
+                let should_suppress_retryable_error =
+                    is_retrying && matches!(&event.msg, EventMsg::Error(_));
 
-                let should_stop_footer = matches!(
-                    event.msg,
-                    EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_)
-                ) || matches!(event.msg, EventMsg::Error(_))
-                    && !is_retrying;
+                let should_exit_on_turn_end =
+                    self.stream_recovery.should_exit_on_turn_end(&event.msg);
+                let should_stop_footer = match &event.msg {
+                    EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_) => should_exit_on_turn_end,
+                    EventMsg::Error(_) => !is_retrying,
+                    _ => false,
+                };
                 let should_update_context = matches!(
                     event.msg,
                     EventMsg::TokenCount(_) | EventMsg::TurnStarted(_)
@@ -1345,29 +1360,22 @@ impl RenderAppState {
                 let should_redraw_after_event = matches!(event.msg, EventMsg::ExecCommandEnd(_));
 
                 match (&event.msg, retry_decision) {
-                    (EventMsg::TurnComplete(_), _) => {
+                    (EventMsg::TurnComplete(_), _) if should_exit_on_turn_end => {
                         self.exit_reason = ExitReason::Completed;
                         self.exit_after_next_draw = true;
                         tui.frame_requester().schedule_frame();
                     }
-                    (EventMsg::TurnAborted(_), _) => {
+                    (EventMsg::TurnAborted(_), _) if should_exit_on_turn_end => {
                         self.exit_reason = ExitReason::UserRequested;
                         self.exit_after_next_draw = true;
                         tui.frame_requester().schedule_frame();
                     }
-                    (EventMsg::Error(_), Some(ContinueRetryDecision::Retry(plan))) => {
-                        let header = if plan.backoff.is_zero() {
-                            format!("Retrying (continue {}/{})", plan.attempt, plan.max_attempts)
-                        } else {
-                            format!(
-                                "Retrying in {}s (continue {}/{})",
-                                plan.backoff.as_secs(),
-                                plan.attempt,
-                                plan.max_attempts
-                            )
-                        };
-                        self.bottom_pane.update_status_header(header);
-                        let op = text_user_input_op(String::from("continue"));
+                    (EventMsg::Error(ev), Some(ContinueRetryDecision::Retry(plan))) => {
+                        self.bottom_pane.update_status_header_with_details(
+                            format!("Reconnecting... {}/{}", plan.attempt, plan.max_attempts),
+                            Some(ev.message.clone()),
+                        );
+                        let op = text_user_input_op(String::from("Continue"));
                         if plan.backoff.is_zero() {
                             let _ = self.codex_op_tx.send(op);
                         } else {
@@ -1382,9 +1390,10 @@ impl RenderAppState {
                         EventMsg::Error(ev),
                         Some(ContinueRetryDecision::GiveUp { max_attempts, .. }),
                     ) => {
-                        // The error itself is rendered into the transcript; return a fatal exit
-                        // reason so callers can exit non-zero without duplicating the message.
-                        self.exit_reason = ExitReason::Fatal(format!(
+                        // The error itself is rendered into the transcript; return a task-failed
+                        // exit reason so callers can skip remaining rounds without duplicating
+                        // the message.
+                        self.exit_reason = ExitReason::TaskFailed(format!(
                             "{} (stream recovery gave up after {max_attempts} retries)",
                             ev.message
                         ));
@@ -1405,7 +1414,11 @@ impl RenderAppState {
                     .bottom_pane
                     .status_widget()
                     .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
-                self.processor.handle_codex_event(event);
+                if should_suppress_retryable_error {
+                    self.processor.handle_retryable_stream_error();
+                } else {
+                    self.processor.handle_codex_event(event);
+                }
                 if should_update_context {
                     self.update_bottom_pane_context_window();
                 }
