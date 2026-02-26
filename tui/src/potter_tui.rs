@@ -116,7 +116,8 @@ impl CodexPotterTui {
         self.queued_user_prompts.pop_front()
     }
 
-    /// Render a single turn (single-turn runner) until the turn ends or the user interrupts.
+    /// Render a single round (render-only runner) until the control plane signals the round
+    /// finished (`EventMsg::PotterRoundFinished`) or the user interrupts.
     pub async fn render_turn(
         &mut self,
         prompt: String,

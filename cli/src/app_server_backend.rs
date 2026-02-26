@@ -35,6 +35,7 @@ use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::PotterRoundOutcome;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::user_input::UserInput as CodexUserInput;
@@ -60,6 +61,7 @@ struct StreamRecoveryContext {
     stream_recovery: PotterStreamRecovery,
     recovery_action_tx: UnboundedSender<RecoveryAction>,
     has_sent_turn_start: bool,
+    has_finished_round: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,6 +186,7 @@ async fn run_app_server_backend_inner(
         stream_recovery: PotterStreamRecovery::new(),
         recovery_action_tx,
         has_sent_turn_start: false,
+        has_finished_round: false,
     };
 
     let result = async {
@@ -555,7 +558,9 @@ fn handle_codex_event(
     recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) {
+    let event_id = event.id.clone();
     let mut should_forward = true;
+    let mut round_outcome: Option<PotterRoundOutcome> = None;
 
     let was_in_retry_streak = recovery.stream_recovery.is_in_retry_streak();
     let should_suppress_turn_complete = match &event.msg {
@@ -609,6 +614,12 @@ fn handle_codex_event(
                         max_attempts,
                     },
                 });
+                round_outcome = Some(PotterRoundOutcome::TaskFailed {
+                    message: format!(
+                        "{} (stream recovery gave up after {attempts}/{max_attempts} retries)",
+                        err.message
+                    ),
+                });
             }
         }
 
@@ -619,8 +630,38 @@ fn handle_codex_event(
         should_forward = false;
     }
 
+    if round_outcome.is_none() {
+        round_outcome = match &event.msg {
+            EventMsg::TurnComplete(_) if !should_suppress_turn_complete => {
+                Some(PotterRoundOutcome::Completed)
+            }
+            EventMsg::TurnAborted(ev)
+                if !matches!(
+                    ev.reason,
+                    codex_protocol::protocol::TurnAbortReason::Replaced
+                ) =>
+            {
+                Some(PotterRoundOutcome::UserRequested)
+            }
+            EventMsg::Error(err) if should_forward => Some(PotterRoundOutcome::Fatal {
+                message: err.message.clone(),
+            }),
+            _ => None,
+        };
+    }
+
     if should_forward {
         let _ = event_tx.send(event);
+    }
+
+    if !recovery.has_finished_round
+        && let Some(outcome) = round_outcome
+    {
+        recovery.has_finished_round = true;
+        let _ = event_tx.send(Event {
+            id: event_id,
+            msg: EventMsg::PotterRoundFinished { outcome },
+        });
     }
 }
 
@@ -799,6 +840,7 @@ mod stream_recovery_tests {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
             has_sent_turn_start: true,
+            has_finished_round: false,
         };
 
         handle_codex_event(
@@ -882,6 +924,7 @@ mod stream_recovery_tests {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
             has_sent_turn_start: false,
+            has_finished_round: false,
         };
 
         handle_codex_event(
@@ -895,6 +938,14 @@ mod stream_recovery_tests {
 
         let event = event_rx.try_recv().expect("expected forwarded error");
         assert!(matches!(event.msg, EventMsg::Error(_)));
+
+        let round_finished = event_rx.try_recv().expect("expected round finished marker");
+        assert!(matches!(
+            round_finished.msg,
+            EventMsg::PotterRoundFinished {
+                outcome: PotterRoundOutcome::Fatal { .. }
+            }
+        ));
         assert!(action_rx.try_recv().is_err(), "expected no continue action");
     }
 
@@ -906,6 +957,7 @@ mod stream_recovery_tests {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
             has_sent_turn_start: true,
+            has_finished_round: false,
         };
 
         let err = retryable_error_event();
@@ -936,6 +988,14 @@ mod stream_recovery_tests {
         };
         assert!(error_message.contains("stream disconnected before completion"));
         assert_eq!((attempts, max_attempts), (10, 10));
+
+        let round_finished = event_rx.try_recv().expect("expected round finished marker");
+        assert!(matches!(
+            round_finished.msg,
+            EventMsg::PotterRoundFinished {
+                outcome: PotterRoundOutcome::TaskFailed { .. }
+            }
+        ));
 
         assert!(
             event_rx.try_recv().is_err(),

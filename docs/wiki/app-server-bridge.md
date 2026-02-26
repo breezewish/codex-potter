@@ -48,11 +48,13 @@ The bridge runs one thread and typically one turn per round:
 2. Initialize the server protocol handshake.
 3. Start a fresh thread (injecting developer instructions).
 4. Start the turn when the UI submits `Op::UserInput`.
-5. Forward streamed events (`codex/event/*`) to the TUI until the turn completes.
+5. Forward streamed events (`codex/event/*`) to the TUI until the round finishes (signaled via
+   `EventMsg::PotterRoundFinished`).
 
-Exception: on retryable stream/network errors, the render-only runner may submit an additional
-`Op::UserInput` (a follow-up `continue` prompt), resulting in another `turn/start` within the same
-round/process.
+Exception: on retryable stream/network errors, the control plane keeps the round alive by issuing
+follow-up `continue` turns (additional `turn/start`) within the same round/process. The bridge
+emits `PotterStreamRecovery*` marker events so the TUI can render a reconnecting status without
+inferring control-plane state.
 
 ### 1) Spawn (`codex … app-server`)
 
@@ -118,7 +120,7 @@ Other `Op` variants are intentionally ignored in potter mode:
 - `Op::GetHistoryEntryRequest`: prompt history is stored locally by `codex-potter` and not fetched
   from the app-server.
 
-## Event forwarding and "turn complete" detection
+## Event forwarding and round completion
 
 The app-server emits notifications for many methods; `codex-potter` only forwards
 `codex/event/*` notifications.
@@ -129,14 +131,18 @@ Rules:
 
 - Only methods starting with `codex/event/` are decoded into `codex_protocol::protocol::Event` and
   forwarded to the UI.
-- Seeing any of these event messages marks the turn as completed:
-  - `EventMsg::TurnComplete`
-  - `EventMsg::TurnAborted`
-- `EventMsg::Error` is treated as terminal **unless** it is classified as a retryable
-  stream/network error via `codex_protocol::potter_stream_recovery::is_retryable_stream_error(...)`
-  (so the UI can recover by sending a follow-up `continue` without respawning the app-server).
+- `EventMsg::TurnComplete` and `EventMsg::TurnAborted` are forwarded as normal events, but the UI
+  does **not** use them as exit conditions.
+- The control plane emits `EventMsg::PotterRoundFinished { outcome }` exactly once to signal that
+  the current round is finished and the UI should exit the render-only runner.
+- `EventMsg::Error` is treated as terminal **unless** it is classified as a retryable stream/network
+  error via `codex_protocol::potter_stream_recovery::is_retryable_stream_error(...)`. When a
+  retryable error happens mid-round, the bridge suppresses the raw error event, emits
+  `PotterStreamRecovery*` marker events for UI rendering, and issues a follow-up `continue` turn
+  internally (without involving the TUI).
 
-After the turn completes, the bridge closes stdin to request the app-server process exit.
+After the UI exits, the bridge observes the `Op` channel closing and closes stdin to request the
+app-server process exit.
 
 ## Approval auto-accept (non-interactive safety)
 

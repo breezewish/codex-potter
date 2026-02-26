@@ -126,6 +126,16 @@ pub enum EventMsg {
         total: u32,
     },
 
+    /// `codex-potter` round finished (outside of the app-server protocol).
+    ///
+    /// CodexPotter can issue multiple upstream `turn/start` calls within the same round when
+    /// recovering from transient stream/network failures. The control plane emits this marker
+    /// exactly once to signal that the round is finished and the UI should exit the render-only
+    /// runner with the provided outcome.
+    PotterRoundFinished {
+        outcome: PotterRoundOutcome,
+    },
+
     /// `codex-potter` stream recovery update.
     ///
     /// When the model stream disconnects mid-turn and CodexPotter decides to recover by issuing
@@ -185,6 +195,15 @@ pub enum EventMsg {
 
     #[serde(other)]
     Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PotterRoundOutcome {
+    Completed,
+    UserRequested,
+    TaskFailed { message: String },
+    Fatal { message: String },
 }
 
 /// Codex errors that we expose to clients.

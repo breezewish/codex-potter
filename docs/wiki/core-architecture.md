@@ -29,7 +29,7 @@ Responsibilities:
   - starts a fresh external `codex app-server`
   - sends a fixed user prompt (`cli/prompts/prompt.md`)
   - injects a developer prompt that points at the progress file (`cli/prompts/developer_prompt.md`)
-  - renders until the turn completes
+  - renders until the round finishes (signaled via `EventMsg::PotterRoundFinished`)
 - Collect additional prompts that the user queues during a running turn; after a session ends, each
   queued prompt becomes a **new session** with a new `.codexpotter/projects/...` directory.
 
@@ -42,8 +42,9 @@ app-server mode and communicates via JSON-RPC over stdin/stdout:
   (`cli/src/app_server_backend.rs`)
 - protocol: a local copy of the app-server schema in `cli/src/app_server_protocol/` (v1/v2)
 
-Within each round, `codex-potter` creates a new thread (`thread/start`) and then starts a single
-turn (`turn/start`).
+Within each round, `codex-potter` creates a new thread (`thread/start`) and then starts a turn
+(`turn/start`). On retryable stream/network failures it may issue follow-up `continue` turns
+(additional `turn/start`) within the same round.
 
 Deep dive: `docs/wiki/app-server-bridge.md`.
 
@@ -60,10 +61,12 @@ Potter-specific additions:
 
 - `EventMsg::PotterSessionStarted`
 - `EventMsg::PotterRoundStarted`
+- `EventMsg::PotterRoundFinished`
 - `EventMsg::PotterSessionSucceeded`
 
-These markers are synthesized by `cli/src/main.rs` (not emitted by the upstream app-server) so the
-TUI can render session/round boundaries and successful session completion as normal history cells.
+These markers are synthesized by the control plane (`cli/src/main.rs` and
+`cli/src/app_server_backend.rs`, not emitted by the upstream app-server) so the TUI can render
+session/round boundaries and successful session completion as normal history cells.
 
 ### TUI renderer (crate: `codex-tui`)
 
@@ -78,7 +81,7 @@ Key modules:
 - `tui/src/app_server_render.rs`: the render-only runner that:
   - sends `Op::UserInput` to start the turn
   - consumes `EventMsg` and inserts `HistoryCell`s
-  - renders the history viewport + bottom pane until the turn completes
+  - renders the history viewport + bottom pane until the round finishes
 
 ## Persistent artifacts (`.codexpotter/`)
 
@@ -148,9 +151,9 @@ For each round:
    `thread/start`.)
 5. Backend forwards `codex/event/*` notifications as `Event` values to the UI. The UI converts them
    into `HistoryCell`s and renders them.
-6. When a `TurnComplete`, `TurnAborted`, or fatal error event is observed, the round ends. The CLI
-   checks the progress file front matter for `finite_incantatem: true` and decides whether to stop the
-   session early (`cli/src/project.rs`).
+6. When the control plane emits `EventMsg::PotterRoundFinished`, the UI exits the render-only
+   runner. The CLI checks the progress file front matter for `finite_incantatem: true` and decides
+   whether to stop the session early (`cli/src/project.rs`).
 
 ### 4) Queued prompts during a turn
 

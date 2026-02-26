@@ -645,6 +645,21 @@ impl RenderOnlyProcessor {
                     git_commit_end,
                 });
             }
+            EventMsg::PotterRoundFinished { .. } => {
+                self.flush_pending_exploring_cell();
+                self.flush_pending_success_ran_cell();
+                if let Some(done) = self.pending_potter_session_succeeded.take() {
+                    self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        crate::history_cell_potter::new_potter_session_succeeded(
+                            done.rounds,
+                            done.duration,
+                            done.user_prompt_file,
+                            done.git_commit_start,
+                            done.git_commit_end,
+                        ),
+                    )));
+                }
+            }
             EventMsg::TokenCount(ev) => {
                 if let Some(info) = ev.info {
                     self.token_usage = info.total_token_usage;
@@ -1366,9 +1381,12 @@ impl RenderAppState {
             }
             EventMsg::PotterStreamRecoveryGaveUp {
                 error_message,
-                max_attempts,
+                max_attempts: _,
                 ..
             } => {
+                if let Some(header) = self.potter_stream_recovery_status_header.take() {
+                    self.bottom_pane.update_status_header(header);
+                }
                 self.processor.current_elapsed_secs = self
                     .bottom_pane
                     .status_widget()
@@ -1381,11 +1399,6 @@ impl RenderAppState {
                     }),
                 });
 
-                self.exit_reason = ExitReason::TaskFailed(format!(
-                    "{error_message} (stream recovery gave up after {max_attempts} retries)"
-                ));
-                self.bottom_pane.set_task_running(false);
-                self.exit_after_next_draw = true;
                 frame_requester.schedule_frame();
                 return Ok(());
             }
@@ -1453,40 +1466,33 @@ impl RenderAppState {
             return Ok(());
         }
 
-        let should_exit_on_turn_end = match &event.msg {
-            EventMsg::TurnComplete(_) => true,
-            EventMsg::TurnAborted(ev) => !matches!(
-                ev.reason,
-                codex_protocol::protocol::TurnAbortReason::Replaced
-            ),
-            _ => false,
-        };
+        let should_exit_on_round_end = matches!(&event.msg, EventMsg::PotterRoundFinished { .. });
         let should_stop_footer = match &event.msg {
-            EventMsg::TurnComplete(_) | EventMsg::TurnAborted(_) => should_exit_on_turn_end,
-            EventMsg::Error(_) => true,
+            EventMsg::PotterRoundFinished { .. } => should_exit_on_round_end,
             _ => false,
         };
         let should_update_context = matches!(
-            event.msg,
+            &event.msg,
             EventMsg::TokenCount(_) | EventMsg::TurnStarted(_)
         );
-        let should_redraw_after_event = matches!(event.msg, EventMsg::ExecCommandEnd(_));
+        let should_redraw_after_event = matches!(&event.msg, EventMsg::ExecCommandEnd(_));
 
         match &event.msg {
-            EventMsg::TurnComplete(_) if should_exit_on_turn_end => {
-                self.exit_reason = ExitReason::Completed;
-                self.exit_after_next_draw = true;
-                frame_requester.schedule_frame();
-            }
-            EventMsg::TurnAborted(_) if should_exit_on_turn_end => {
-                self.exit_reason = ExitReason::UserRequested;
-                self.exit_after_next_draw = true;
-                frame_requester.schedule_frame();
-            }
-            EventMsg::Error(ev) => {
-                // The error itself is rendered into the transcript; return a fatal exit
-                // reason so callers can exit non-zero without duplicating the message.
-                self.exit_reason = ExitReason::Fatal(ev.message.clone());
+            EventMsg::PotterRoundFinished { outcome } if should_exit_on_round_end => {
+                self.exit_reason = match outcome {
+                    codex_protocol::protocol::PotterRoundOutcome::Completed => {
+                        ExitReason::Completed
+                    }
+                    codex_protocol::protocol::PotterRoundOutcome::UserRequested => {
+                        ExitReason::UserRequested
+                    }
+                    codex_protocol::protocol::PotterRoundOutcome::TaskFailed { message } => {
+                        ExitReason::TaskFailed(message.clone())
+                    }
+                    codex_protocol::protocol::PotterRoundOutcome::Fatal { message } => {
+                        ExitReason::Fatal(message.clone())
+                    }
+                };
                 self.exit_after_next_draw = true;
                 frame_requester.schedule_frame();
             }
@@ -1997,7 +2003,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_recovery_gave_up_inserts_error_cell_and_exits_task_failed() {
+    fn stream_recovery_gave_up_inserts_error_cell_and_exits_on_round_finished_task_failed() {
         let width: u16 = 80;
 
         let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
@@ -2041,11 +2047,9 @@ mod tests {
         .expect("handle codex event");
 
         assert!(
-            matches!(app.exit_reason, ExitReason::TaskFailed(_)),
-            "expected TaskFailed exit reason; got: {:?}",
-            app.exit_reason
+            !app.exit_after_next_draw,
+            "expected app to wait for PotterRoundFinished"
         );
-        assert!(app.exit_after_next_draw, "expected app to request exit");
 
         let cells = drain_history_cell_strings(&mut rx_app, width);
         pretty_assertions::assert_eq!(cells.len(), 1);
@@ -2059,6 +2063,26 @@ mod tests {
             op_rx.try_recv().is_err(),
             "expected no Continue op after giving up"
         );
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "round-finished".into(),
+                msg: EventMsg::PotterRoundFinished {
+                    outcome: codex_protocol::protocol::PotterRoundOutcome::TaskFailed {
+                        message: "stream recovery gave up".to_string(),
+                    },
+                },
+            },
+        )
+        .expect("handle round finished event");
+
+        assert!(
+            matches!(app.exit_reason, ExitReason::TaskFailed(_)),
+            "expected TaskFailed exit reason; got: {:?}",
+            app.exit_reason
+        );
+        assert!(app.exit_after_next_draw, "expected app to request exit");
     }
 
     #[test]

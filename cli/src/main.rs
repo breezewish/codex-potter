@@ -204,12 +204,16 @@ async fn main() -> anyhow::Result<()> {
                 let git_commit_start = init.git_commit_start.clone();
                 tokio::spawn(async move {
                     while let Some(event) = backend_event_rx.recv().await {
-                        if matches!(&event.msg, EventMsg::TurnComplete(_))
-                            && crate::project::progress_file_has_finite_incantatem_true(
-                                &workdir,
-                                &progress_file_rel,
-                            )
-                            .unwrap_or(false)
+                        if matches!(
+                            &event.msg,
+                            EventMsg::PotterRoundFinished {
+                                outcome: codex_protocol::protocol::PotterRoundOutcome::Completed
+                            }
+                        ) && crate::project::progress_file_has_finite_incantatem_true(
+                            &workdir,
+                            &progress_file_rel,
+                        )
+                        .unwrap_or(false)
                         {
                             let _ = ui_event_tx.send(Event {
                                 id: "".to_string(),
