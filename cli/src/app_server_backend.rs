@@ -239,9 +239,17 @@ async fn run_app_server_backend_inner(
                         continue;
                     };
                     if matches!(op, Op::UserInput { .. }) {
+                        let was_in_retry_streak = recovery.stream_recovery.is_in_retry_streak();
                         recovery.has_sent_turn_start = true;
                         recovery.last_turn_start_was_recovery_continue = false;
                         recovery.pending_continue_retry = None;
+                        recovery.stream_recovery = PotterStreamRecovery::new();
+                        if was_in_retry_streak {
+                            let _ = event_tx.send(Event {
+                                id: "".to_string(),
+                                msg: EventMsg::PotterStreamRecoveryRecovered,
+                            });
+                        }
                     }
                     handle_op(
                         &thread_id,
@@ -1478,6 +1486,180 @@ done
         assert!(
             marker.exists(),
             "dummy server did not observe rollback+continue"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn backend_user_input_cancels_pending_stream_recovery_continue() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let codex_bin = temp.path().join("dummy-codex");
+        let marker = temp.path().join("saw-manual-input-without-auto-continue");
+
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+MARKER="{marker}"
+
+if [[ "${{1:-}}" != "app-server" ]]; then
+  echo "expected app-server, got: $*" >&2
+  exit 1
+fi
+
+# initialize request
+IFS= read -r _line
+echo '{{"id":1,"result":{{}}}}'
+
+# initialized notification
+IFS= read -r _line
+
+# thread/start request
+IFS= read -r _line
+echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","path":"rollout.jsonl"}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"readOnly"}},"reasoningEffort":null}}}}'
+
+# first turn/start request
+IFS= read -r _line
+echo '{{"id":3,"result":{{}}}}'
+
+# signal a retryable stream error, followed by an empty completion
+echo '{{"method":"codex/event/test","params":{{"id":"err-1","msg":{{"type":"error","message":"stream disconnected before completion: error sending request for url (...)"}}}}}}'
+echo '{{"method":"codex/event/test","params":{{"id":"tc-1","msg":{{"type":"turn_complete","last_agent_message":null}}}}}}'
+
+# second turn/start request (first automatic Continue)
+IFS= read -r turn_start
+echo "$turn_start" | grep -q '"method":"turn/start"' || {{
+  echo "expected turn/start, got: $turn_start" >&2
+  exit 1
+}}
+echo "$turn_start" | grep -q '"text":"Continue"' || {{
+  echo "expected Continue prompt, got: $turn_start" >&2
+  exit 1
+}}
+echo '{{"id":4,"result":{{}}}}'
+
+# signal another retryable stream error (attempt 2), which would normally schedule a rollback+Continue
+echo '{{"method":"codex/event/test","params":{{"id":"err-2","msg":{{"type":"error","message":"stream disconnected before completion: error sending request for url (...)"}}}}}}'
+echo '{{"method":"codex/event/test","params":{{"id":"tc-2","msg":{{"type":"turn_complete","last_agent_message":null}}}}}}'
+
+# third turn/start request (manual user input should cancel the pending automatic Continue)
+IFS= read -r turn_start
+echo "$turn_start" | grep -q '"method":"turn/start"' || {{
+  if echo "$turn_start" | grep -q '"method":"thread/rollback"'; then
+    echo "unexpected thread/rollback before manual input: $turn_start" >&2
+  else
+    echo "expected manual turn/start, got: $turn_start" >&2
+  fi
+  exit 1
+}}
+echo "$turn_start" | grep -q '"text":"manual"' || {{
+  echo "expected manual prompt, got: $turn_start" >&2
+  exit 1
+}}
+echo '{{"id":5,"result":{{}}}}'
+
+# Ensure the pending retry action does not fire after the manual input.
+if IFS= read -r -t 2 unexpected; then
+  echo "expected no further requests, got: $unexpected" >&2
+  exit 1
+fi
+
+touch "$MARKER"
+
+# Wait for the client to close stdin to request shutdown.
+while IFS= read -r _line; do
+  :
+done
+"#,
+            marker = marker.display(),
+        );
+
+        std::fs::write(&codex_bin, script).expect("write dummy codex");
+        let mut perms = std::fs::metadata(&codex_bin)
+            .expect("stat dummy codex")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex_bin, perms).expect("chmod dummy codex");
+
+        let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+        let (fatal_exit_tx, _fatal_exit_rx) = unbounded_channel::<String>();
+
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let backend = tokio::spawn(async move {
+            run_app_server_backend_inner(
+                codex_bin.display().to_string(),
+                None,
+                AppServerLaunchConfig {
+                    spawn_sandbox: None,
+                    thread_sandbox: None,
+                    bypass_approvals_and_sandbox: false,
+                },
+                None,
+                &mut op_rx,
+                &event_tx,
+                &fatal_exit_tx,
+            )
+            .await
+        });
+
+        op_tx
+            .send(Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            })
+            .expect("send user input");
+
+        let saw_second_attempt = timeout(Duration::from_secs(5), async {
+            while let Some(event) = event_rx.recv().await {
+                if let EventMsg::PotterStreamRecoveryUpdate { attempt, .. } = event.msg
+                    && attempt == 2
+                {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+        assert_eq!(
+            saw_second_attempt,
+            Ok(true),
+            "did not observe stream recovery attempt 2"
+        );
+
+        op_tx
+            .send(Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "manual".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            })
+            .expect("send manual input");
+
+        timeout(Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("timed out waiting for dummy server marker");
+
+        drop(op_tx);
+
+        timeout(Duration::from_secs(5), backend)
+            .await
+            .expect("backend timed out")
+            .expect("backend panicked")
+            .expect("backend failed");
+
+        assert!(
+            marker.exists(),
+            "dummy server did not observe manual input without auto continue"
         );
     }
 
