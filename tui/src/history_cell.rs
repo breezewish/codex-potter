@@ -30,7 +30,6 @@ use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
 use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
-use crate::ui_colors::secondary_color;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use crate::update_action::UpdateAction;
 use crate::wrapping::RtOptions;
@@ -482,12 +481,7 @@ pub fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     // Failure title
-    lines.push(Line::from(Span::styled(
-        "✘ Failed to apply patch",
-        Style::default()
-            .fg(secondary_color())
-            .add_modifier(Modifier::BOLD),
-    )));
+    lines.push(Line::from("✘ Failed to apply patch".magenta().bold()));
 
     if !stderr.trim().is_empty() {
         let output = output_lines(

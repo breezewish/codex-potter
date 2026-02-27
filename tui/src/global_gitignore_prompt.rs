@@ -18,8 +18,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
-use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
+use crate::render::renderable::RenderableExt as _;
 use crate::tui;
 use crate::tui::FrameRequester;
 use crate::tui::Tui;
@@ -67,7 +67,7 @@ pub async fn run_global_gitignore_prompt_with_tui(
     let mut screen =
         GlobalGitignorePromptScreen::new(tui.frame_requester(), global_gitignore_path_display);
     tui.draw(u16::MAX, |frame| {
-        WidgetRef::render_ref(&&screen, frame.area(), frame.buffer_mut());
+        frame.render_widget_ref(&screen, frame.area());
     })?;
 
     let events = tui.event_stream();
@@ -82,7 +82,7 @@ pub async fn run_global_gitignore_prompt_with_tui(
             TuiEvent::Paste(_) => {}
             TuiEvent::Draw => {
                 tui.draw(u16::MAX, |frame| {
-                    WidgetRef::render_ref(&&screen, frame.area(), frame.buffer_mut());
+                    frame.render_widget_ref(&screen, frame.area());
                 })?;
             }
         }
@@ -189,60 +189,54 @@ impl GlobalGitignorePromptScreen {
 impl WidgetRef for &GlobalGitignorePromptScreen {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         Clear.render(area, buf);
-        let rows: Vec<crate::render::renderable::RenderableItem<'_>> = vec![
-            "".into(),
-            InsetRenderable::new(
-                Line::from(vec![
-                    Span::from("Add "),
-                    Span::from(".codexpotter/").cyan(),
-                    Span::from(" to your global gitignore file "),
-                    Span::from(self.global_gitignore_path_display.clone()).cyan(),
-                    Span::from("?"),
-                ]),
-                Insets::tlbr(0, 2, 0, 0),
-            )
-            .into(),
-            "".into(),
-            InsetRenderable::new(
-                Line::from(
-                    "This keeps your CodexPotter sessions private and prevents accidental commits.",
-                )
-                .dim(),
-                Insets::tlbr(0, 2, 0, 0),
-            )
-            .into(),
-            "".into(),
-            selection_option_row(
-                0,
-                "Yes, add to global gitignore".to_string(),
-                self.highlighted == GitignoreSelection::Yes,
-            )
-            .into(),
-            selection_option_row(
-                1,
-                "No".to_string(),
-                self.highlighted == GitignoreSelection::No,
-            )
-            .into(),
-            selection_option_row(
-                2,
-                "No, don't ask me again".to_string(),
-                self.highlighted == GitignoreSelection::DontAskAgain,
-            )
-            .into(),
-            "".into(),
-            InsetRenderable::new(
-                Line::from(vec![
-                    Span::from("Press ").dim(),
-                    crate::key_hint::plain(KeyCode::Enter).into(),
-                    Span::from(" to continue").dim(),
-                ]),
-                Insets::tlbr(0, 2, 0, 0),
-            )
-            .into(),
-        ];
 
-        ColumnRenderable::with(rows).render(area, buf);
+        let mut column = ColumnRenderable::new();
+        column.push("");
+        column.push(
+            Line::from(vec![
+                Span::from("Add "),
+                Span::from(".codexpotter/").cyan(),
+                Span::from(" to your global gitignore file "),
+                Span::from(self.global_gitignore_path_display.clone()).cyan(),
+                Span::from("?"),
+            ])
+            .inset(Insets::tlbr(0, 2, 0, 0)),
+        );
+        column.push("");
+        column.push(
+            Line::from(
+                "This keeps your CodexPotter sessions private and prevents accidental commits.",
+            )
+            .dim()
+            .inset(Insets::tlbr(0, 2, 0, 0)),
+        );
+        column.push("");
+        column.push(selection_option_row(
+            0,
+            "Yes, add to global gitignore".to_string(),
+            self.highlighted == GitignoreSelection::Yes,
+        ));
+        column.push(selection_option_row(
+            1,
+            "No".to_string(),
+            self.highlighted == GitignoreSelection::No,
+        ));
+        column.push(selection_option_row(
+            2,
+            "No, don't ask me again".to_string(),
+            self.highlighted == GitignoreSelection::DontAskAgain,
+        ));
+        column.push("");
+        column.push(
+            Line::from(vec![
+                Span::from("Press ").dim(),
+                crate::key_hint::plain(KeyCode::Enter).into(),
+                Span::from(" to continue").dim(),
+            ])
+            .inset(Insets::tlbr(0, 2, 0, 0)),
+        );
+
+        column.render(area, buf);
     }
 }
 
@@ -250,11 +244,8 @@ fn selection_option_row(
     index: usize,
     text: String,
     selected: bool,
-) -> crate::render::renderable::InsetRenderable<'static> {
-    InsetRenderable::new(
-        SelectionOptionRow::new(index, text, selected),
-        Insets::tlbr(0, 2, 0, 0),
-    )
+) -> crate::render::renderable::RenderableItem<'static> {
+    SelectionOptionRow::new(index, text, selected).inset(Insets::tlbr(0, 2, 0, 0))
 }
 
 struct SelectionOptionRow {

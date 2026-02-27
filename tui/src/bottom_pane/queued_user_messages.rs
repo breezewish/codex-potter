@@ -7,7 +7,6 @@ use ratatui::widgets::Paragraph;
 
 use crate::key_hint;
 use crate::render::renderable::Renderable;
-use crate::render::renderable::RenderableItem;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_lines;
 
@@ -23,12 +22,12 @@ impl QueuedUserMessages {
         }
     }
 
-    fn as_renderable(&self, width: u16) -> RenderableItem<'_> {
+    fn as_renderable(&self, width: u16) -> Box<dyn Renderable> {
         if self.messages.is_empty() || width < 4 {
             return Box::new(());
         }
 
-        let mut lines = Vec::new();
+        let mut lines = vec![];
 
         for message in &self.messages {
             let wrapped = word_wrap_lines(
@@ -38,11 +37,11 @@ impl QueuedUserMessages {
                     .subsequent_indent(Line::from("    ")),
             );
 
-            let original_len = wrapped.len();
+            let len = wrapped.len();
             for line in wrapped.into_iter().take(3) {
                 lines.push(line);
             }
-            if original_len > 3 {
+            if len > 3 {
                 lines.push(Line::from("    …".dim().italic()));
             }
         }
@@ -56,7 +55,7 @@ impl QueuedUserMessages {
             .dim(),
         );
 
-        Paragraph::new(lines).into()
+        Box::new(Paragraph::new(lines))
     }
 }
 

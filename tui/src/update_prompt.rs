@@ -17,8 +17,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
-use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
+use crate::render::renderable::RenderableExt as _;
 use crate::tui::FrameRequester;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
@@ -47,7 +47,7 @@ pub async fn run_update_prompt_if_needed(tui: &mut Tui) -> anyhow::Result<Update
 
     let mut screen = UpdatePromptScreen::new(tui.frame_requester(), latest_version, update_action);
     tui.draw(u16::MAX, |frame| {
-        WidgetRef::render_ref(&&screen, frame.area(), frame.buffer_mut());
+        frame.render_widget_ref(&screen, frame.area());
     })?;
 
     let events = tui.event_stream();
@@ -62,7 +62,7 @@ pub async fn run_update_prompt_if_needed(tui: &mut Tui) -> anyhow::Result<Update
             TuiEvent::Paste(_) => {}
             TuiEvent::Draw => {
                 tui.draw(u16::MAX, |frame| {
-                    WidgetRef::render_ref(&&screen, frame.area(), frame.buffer_mut());
+                    frame.render_widget_ref(&screen, frame.area());
                 })?;
             }
         }
@@ -187,66 +187,59 @@ impl WidgetRef for &UpdatePromptScreen {
 
         let update_command = self.update_action.command_str();
 
-        let rows: Vec<crate::render::renderable::RenderableItem<'_>> = vec![
-            "".into(),
-            InsetRenderable::new(
-                Line::from(vec![
-                    Span::from("✨ ").bold().cyan(),
-                    Span::from("Update available!").bold(),
-                    Span::from(" "),
-                    Span::from(format!(
-                        "{current} -> {latest}",
-                        current = crate::CODEX_POTTER_VERSION,
-                        latest = self.latest_version
-                    ))
-                    .dim(),
-                ]),
-                Insets::tlbr(0, 2, 0, 0),
-            )
-            .into(),
-            "".into(),
-            InsetRenderable::new(
-                Line::from(vec![
-                    Span::from("Release notes: ").dim(),
-                    Span::from("https://github.com/breezewish/CodexPotter/releases/latest")
-                        .dim()
-                        .underlined(),
-                ]),
-                Insets::tlbr(0, 2, 0, 0),
-            )
-            .into(),
-            "".into(),
-            selection_option_row(
-                0,
-                format!("Update now (runs `{update_command}`)"),
-                self.highlighted == UpdateSelection::UpdateNow,
-            )
-            .into(),
-            selection_option_row(
-                1,
-                "Skip".to_string(),
-                self.highlighted == UpdateSelection::NotNow,
-            )
-            .into(),
-            selection_option_row(
-                2,
-                "Skip until next version".to_string(),
-                self.highlighted == UpdateSelection::DontRemind,
-            )
-            .into(),
-            "".into(),
-            InsetRenderable::new(
-                Line::from(vec![
-                    Span::from("Press ").dim(),
-                    crate::key_hint::plain(KeyCode::Enter).into(),
-                    Span::from(" to continue").dim(),
-                ]),
-                Insets::tlbr(0, 2, 0, 0),
-            )
-            .into(),
-        ];
+        let mut column = ColumnRenderable::new();
+        column.push("");
+        column.push(
+            Line::from(vec![
+                Span::from("✨ ").bold().cyan(),
+                Span::from("Update available!").bold(),
+                Span::from(" "),
+                Span::from(format!(
+                    "{current} -> {latest}",
+                    current = crate::CODEX_POTTER_VERSION,
+                    latest = self.latest_version
+                ))
+                .dim(),
+            ])
+            .inset(Insets::tlbr(0, 2, 0, 0)),
+        );
+        column.push("");
+        column.push(
+            Line::from(vec![
+                Span::from("Release notes: ").dim(),
+                Span::from("https://github.com/breezewish/CodexPotter/releases/latest")
+                    .dim()
+                    .underlined(),
+            ])
+            .inset(Insets::tlbr(0, 2, 0, 0)),
+        );
+        column.push("");
+        column.push(selection_option_row(
+            0,
+            format!("Update now (runs `{update_command}`)"),
+            self.highlighted == UpdateSelection::UpdateNow,
+        ));
+        column.push(selection_option_row(
+            1,
+            "Skip".to_string(),
+            self.highlighted == UpdateSelection::NotNow,
+        ));
+        column.push(selection_option_row(
+            2,
+            "Skip until next version".to_string(),
+            self.highlighted == UpdateSelection::DontRemind,
+        ));
+        column.push("");
+        column.push(
+            Line::from(vec![
+                Span::from("Press ").dim(),
+                crate::key_hint::plain(KeyCode::Enter).into(),
+                Span::from(" to continue").dim(),
+            ])
+            .inset(Insets::tlbr(0, 2, 0, 0)),
+        );
 
-        ColumnRenderable::with(rows).render(area, buf);
+        column.render(area, buf);
     }
 }
 
@@ -254,11 +247,8 @@ fn selection_option_row(
     index: usize,
     text: String,
     selected: bool,
-) -> crate::render::renderable::InsetRenderable<'static> {
-    InsetRenderable::new(
-        SelectionOptionRow::new(index, text, selected),
-        Insets::tlbr(0, 2, 0, 0),
-    )
+) -> crate::render::renderable::RenderableItem<'static> {
+    SelectionOptionRow::new(index, text, selected).inset(Insets::tlbr(0, 2, 0, 0))
 }
 
 struct SelectionOptionRow {
