@@ -22,6 +22,8 @@ use crate::app_server_protocol::JSONRPCMessage;
 use crate::app_server_protocol::JSONRPCResponse;
 use crate::app_server_protocol::RequestId;
 use crate::app_server_protocol::ServerRequest;
+use crate::app_server_protocol::ThreadRollbackParams;
+use crate::app_server_protocol::ThreadRollbackResponse;
 use crate::app_server_protocol::ThreadStartParams;
 use crate::app_server_protocol::ThreadStartResponse;
 use crate::app_server_protocol::TurnStartParams;
@@ -54,7 +56,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecoveryAction {
-    SendContinue,
+    RetryContinue { attempt: u32 },
 }
 
 struct StreamRecoveryContext {
@@ -62,6 +64,8 @@ struct StreamRecoveryContext {
     recovery_action_tx: UnboundedSender<RecoveryAction>,
     has_sent_turn_start: bool,
     has_finished_round: bool,
+    last_turn_start_was_recovery_continue: bool,
+    recovery_continue_turn_starts_since_activity: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +191,8 @@ async fn run_app_server_backend_inner(
         recovery_action_tx,
         has_sent_turn_start: false,
         has_finished_round: false,
+        last_turn_start_was_recovery_continue: false,
+        recovery_continue_turn_starts_since_activity: 0,
     };
 
     let result = async {
@@ -233,6 +239,7 @@ async fn run_app_server_backend_inner(
                     };
                     if matches!(op, Op::UserInput { .. }) {
                         recovery.has_sent_turn_start = true;
+                        recovery.last_turn_start_was_recovery_continue = false;
                     }
                     handle_op(
                         &thread_id,
@@ -255,8 +262,31 @@ async fn run_app_server_backend_inner(
                     }
 
                     match action {
-                        RecoveryAction::SendContinue => {
+                        RecoveryAction::RetryContinue { attempt } => {
                             recovery.has_sent_turn_start = true;
+                            if attempt >= 2
+                                && recovery.last_turn_start_was_recovery_continue
+                                && recovery.recovery_continue_turn_starts_since_activity > 0
+                            {
+                                // Best-effort optimization: remove the previous automatic
+                                // `Continue` turn from the thread history so stream recovery does
+                                // not accumulate multiple redundant `Continue` prompts.
+                                //
+                                // If rollback fails (for example because the server doesn't
+                                // support it or the turn is still in progress), fall back to the
+                                // current behavior and still issue a follow-up `Continue`.
+                                thread_rollback(
+                                    &thread_id,
+                                    stdin.as_mut().context("codex app-server stdin unavailable")?,
+                                    &mut lines,
+                                    &mut next_id,
+                                    &mut recovery,
+                                    event_tx,
+                                )
+                                .await?;
+                            }
+                            recovery.last_turn_start_was_recovery_continue = true;
+                            recovery.recovery_continue_turn_starts_since_activity += 1;
                             handle_op(
                                 &thread_id,
                                 Op::UserInput {
@@ -458,6 +488,35 @@ async fn thread_start(
     serde_json::from_value(response.result).context("decode thread/start response")
 }
 
+async fn thread_rollback(
+    thread_id: &str,
+    stdin: &mut ChildStdin,
+    lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
+    next_id: &mut i64,
+    recovery: &mut StreamRecoveryContext,
+    event_tx: &UnboundedSender<Event>,
+) -> anyhow::Result<()> {
+    let request_id = next_request_id(next_id);
+    let request = ClientRequest::ThreadRollback {
+        request_id: request_id.clone(),
+        params: ThreadRollbackParams {
+            thread_id: thread_id.to_string(),
+            num_turns: 1,
+        },
+    };
+    send_message(stdin, &request).await?;
+
+    match read_until_response_or_error(stdin, lines, &request_id, recovery, event_tx).await? {
+        Ok(response) => {
+            // Best-effort validation: the shape is expected to match the v2 protocol, but stream
+            // recovery should not fail the whole session if the response is slightly different.
+            let _ = serde_json::from_value::<ThreadRollbackResponse>(response.result);
+            Ok(())
+        }
+        Err(_error) => Ok(()),
+    }
+}
+
 async fn handle_op(
     thread_id: &str,
     op: Op,
@@ -571,6 +630,7 @@ fn handle_codex_event(
     recovery.stream_recovery.observe_event(&event.msg);
 
     if was_in_retry_streak && !recovery.stream_recovery.is_in_retry_streak() {
+        recovery.recovery_continue_turn_starts_since_activity = 0;
         let _ = event_tx.send(Event {
             id: event.id.clone(),
             msg: EventMsg::PotterStreamRecoveryRecovered,
@@ -593,12 +653,15 @@ fn handle_codex_event(
                 });
 
                 let tx = recovery.recovery_action_tx.clone();
+                let action = RecoveryAction::RetryContinue {
+                    attempt: plan.attempt,
+                };
                 if plan.backoff.is_zero() {
-                    let _ = tx.send(RecoveryAction::SendContinue);
+                    let _ = tx.send(action);
                 } else {
                     tokio::spawn(async move {
                         tokio::time::sleep(plan.backoff).await;
-                        let _ = tx.send(RecoveryAction::SendContinue);
+                        let _ = tx.send(action);
                     });
                 }
             }
@@ -757,6 +820,21 @@ async fn read_until_response(
     recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) -> anyhow::Result<JSONRPCResponse> {
+    match read_until_response_or_error(stdin, lines, &request_id, recovery, event_tx).await? {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            anyhow::bail!("app-server returned error for {request_id:?}: {error:?}");
+        }
+    }
+}
+
+async fn read_until_response_or_error(
+    stdin: &mut ChildStdin,
+    lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
+    request_id: &RequestId,
+    recovery: &mut StreamRecoveryContext,
+    event_tx: &UnboundedSender<Event>,
+) -> anyhow::Result<Result<JSONRPCResponse, JSONRPCErrorError>> {
     loop {
         let Some(line) = lines.next_line().await? else {
             anyhow::bail!("app-server stdout closed while waiting for response {request_id:?}");
@@ -765,13 +843,10 @@ async fn read_until_response(
             serde_json::from_str(&line).with_context(|| format!("decode json-rpc: {line}"))?;
 
         match msg {
-            JSONRPCMessage::Response(response) if response.id == request_id => return Ok(response),
-            JSONRPCMessage::Error(err) if err.id == request_id => {
-                anyhow::bail!(
-                    "app-server returned error for {request_id:?}: {:?}",
-                    err.error
-                );
+            JSONRPCMessage::Response(response) if &response.id == request_id => {
+                return Ok(Ok(response));
             }
+            JSONRPCMessage::Error(err) if &err.id == request_id => return Ok(Err(err.error)),
             JSONRPCMessage::Notification(notification) => {
                 handle_codex_event_notification(
                     &notification.method,
@@ -841,6 +916,8 @@ mod stream_recovery_tests {
             recovery_action_tx: action_tx,
             has_sent_turn_start: true,
             has_finished_round: false,
+            last_turn_start_was_recovery_continue: false,
+            recovery_continue_turn_starts_since_activity: 0,
         };
 
         handle_codex_event(
@@ -873,8 +950,8 @@ mod stream_recovery_tests {
             "expected retryable Error to be suppressed"
         );
         assert_eq!(
-            action_rx.try_recv().expect("expected SendContinue action"),
-            RecoveryAction::SendContinue
+            action_rx.try_recv().expect("expected RetryContinue action"),
+            RecoveryAction::RetryContinue { attempt: 1 }
         );
 
         handle_codex_event(
@@ -925,6 +1002,8 @@ mod stream_recovery_tests {
             recovery_action_tx: action_tx,
             has_sent_turn_start: false,
             has_finished_round: false,
+            last_turn_start_was_recovery_continue: false,
+            recovery_continue_turn_starts_since_activity: 0,
         };
 
         handle_codex_event(
@@ -958,6 +1037,8 @@ mod stream_recovery_tests {
             recovery_action_tx: action_tx,
             has_sent_turn_start: true,
             has_finished_round: false,
+            last_turn_start_was_recovery_continue: false,
+            recovery_continue_turn_starts_since_activity: 0,
         };
 
         let err = retryable_error_event();
@@ -1148,6 +1229,154 @@ done
         assert!(
             marker.exists(),
             "dummy server did not observe second turn/start"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn backend_stream_recovery_rolls_back_last_continue_turn() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let codex_bin = temp.path().join("dummy-codex");
+        let marker = temp.path().join("saw-rollback-then-continue");
+
+        let script = format!(
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+
+MARKER="{marker}"
+
+if [[ "${{1:-}}" != "app-server" ]]; then
+  echo "expected app-server, got: $*" >&2
+  exit 1
+fi
+
+# initialize request
+IFS= read -r _line
+echo '{{"id":1,"result":{{}}}}'
+
+# initialized notification
+IFS= read -r _line
+
+# thread/start request
+IFS= read -r _line
+echo '{{"id":2,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","path":"rollout.jsonl"}},"model":"test-model","modelProvider":"test-provider","cwd":"project","approvalPolicy":"never","sandbox":{{"type":"readOnly"}},"reasoningEffort":null}}}}'
+
+# first turn/start request
+IFS= read -r _line
+echo '{{"id":3,"result":{{}}}}'
+
+# signal a retryable stream error, followed by an empty completion
+echo '{{"method":"codex/event/test","params":{{"id":"err-1","msg":{{"type":"error","message":"stream disconnected before completion: error sending request for url (...)"}}}}}}'
+echo '{{"method":"codex/event/test","params":{{"id":"tc-1","msg":{{"type":"turn_complete","last_agent_message":null}}}}}}'
+
+# second turn/start request (first automatic Continue)
+IFS= read -r turn_start
+echo "$turn_start" | grep -q '"method":"turn/start"' || {{
+  echo "expected turn/start, got: $turn_start" >&2
+  exit 1
+}}
+echo "$turn_start" | grep -q '"text":"Continue"' || {{
+  echo "expected Continue prompt, got: $turn_start" >&2
+  exit 1
+}}
+echo '{{"id":4,"result":{{}}}}'
+
+# signal another retryable stream error (attempt 2)
+echo '{{"method":"codex/event/test","params":{{"id":"err-2","msg":{{"type":"error","message":"stream disconnected before completion: error sending request for url (...)"}}}}}}'
+echo '{{"method":"codex/event/test","params":{{"id":"tc-2","msg":{{"type":"turn_complete","last_agent_message":null}}}}}}'
+
+# thread/rollback request should occur before the next Continue
+IFS= read -r rollback
+echo "$rollback" | grep -q '"method":"thread/rollback"' || {{
+  echo "expected thread/rollback, got: $rollback" >&2
+  exit 1
+}}
+echo "$rollback" | grep -q '"numTurns":1' || {{
+  echo "expected numTurns=1, got: $rollback" >&2
+  exit 1
+}}
+echo '{{"id":5,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","path":"rollout.jsonl"}}}}}}'
+
+# third turn/start request (automatic Continue after rollback)
+IFS= read -r turn_start
+echo "$turn_start" | grep -q '"method":"turn/start"' || {{
+  echo "expected turn/start, got: $turn_start" >&2
+  exit 1
+}}
+echo "$turn_start" | grep -q '"text":"Continue"' || {{
+  echo "expected Continue prompt, got: $turn_start" >&2
+  exit 1
+}}
+touch "$MARKER"
+echo '{{"id":6,"result":{{}}}}'
+
+# Wait for the client to close stdin to request shutdown.
+while IFS= read -r _line; do
+  :
+done
+"#,
+            marker = marker.display()
+        );
+
+        std::fs::write(&codex_bin, script).expect("write dummy codex");
+        let mut perms = std::fs::metadata(&codex_bin)
+            .expect("stat dummy codex")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex_bin, perms).expect("chmod dummy codex");
+
+        let (event_tx, _event_rx) = unbounded_channel::<Event>();
+        let (fatal_exit_tx, _fatal_exit_rx) = unbounded_channel::<String>();
+
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let backend = tokio::spawn(async move {
+            run_app_server_backend_inner(
+                codex_bin.display().to_string(),
+                None,
+                AppServerLaunchConfig {
+                    spawn_sandbox: None,
+                    thread_sandbox: None,
+                    bypass_approvals_and_sandbox: false,
+                },
+                None,
+                &mut op_rx,
+                &event_tx,
+                &fatal_exit_tx,
+            )
+            .await
+        });
+
+        op_tx
+            .send(Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            })
+            .expect("send user input");
+
+        timeout(Duration::from_secs(10), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("timed out waiting for dummy server marker");
+
+        drop(op_tx);
+
+        timeout(Duration::from_secs(5), backend)
+            .await
+            .expect("backend timed out")
+            .expect("backend panicked")
+            .expect("backend failed");
+
+        assert!(
+            marker.exists(),
+            "dummy server did not observe rollback+continue"
         );
     }
 

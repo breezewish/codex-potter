@@ -117,6 +117,24 @@ pub struct Thread {
     pub path: PathBuf,
 }
 
+/// Parameters for the `thread/rollback` JSON-RPC method.
+///
+/// Rollback only affects the thread history and does **not** revert any local file changes made by
+/// the agent.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRollbackParams {
+    pub thread_id: String,
+    /// The number of turns to drop from the end of the thread. Must be >= 1.
+    pub num_turns: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRollbackResponse {
+    pub thread: Thread,
+}
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStartParams {

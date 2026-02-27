@@ -24,6 +24,13 @@ pub enum ClientRequest {
         params: v2::ThreadStartParams,
     },
 
+    #[serde(rename = "thread/rollback")]
+    ThreadRollback {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: v2::ThreadRollbackParams,
+    },
+
     #[serde(rename = "turn/start")]
     TurnStart {
         #[serde(rename = "id")]
@@ -85,6 +92,7 @@ impl TryFrom<JSONRPCRequest> for ServerRequest {
 #[cfg(test)]
 mod tests {
     use super::v1::ClientInfo;
+    use super::v2::ThreadRollbackParams;
     use super::v2::ThreadStartParams;
     use super::v2::TurnStartParams;
     use super::*;
@@ -184,9 +192,33 @@ mod tests {
     }
 
     #[test]
+    fn serialize_thread_rollback_includes_num_turns() {
+        let request = ClientRequest::ThreadRollback {
+            request_id: RequestId::Integer(3),
+            params: ThreadRollbackParams {
+                thread_id: "thread-1".to_string(),
+                num_turns: 1,
+            },
+        };
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["method"], "thread/rollback");
+        assert_eq!(value["id"], 3);
+
+        let params = value["params"].as_object().expect("params object");
+        for key in ["threadId", "numTurns"] {
+            assert!(
+                params.contains_key(key),
+                "thread/rollback params must contain key {key}"
+            );
+        }
+        assert_eq!(value["params"]["numTurns"], 1);
+    }
+
+    #[test]
     fn serialize_initialize_request() {
         let request = ClientRequest::Initialize {
-            request_id: RequestId::Integer(3),
+            request_id: RequestId::Integer(4),
             params: v1::InitializeParams {
                 client_info: ClientInfo {
                     name: "codex-potter".to_string(),
