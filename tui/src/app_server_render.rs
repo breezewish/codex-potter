@@ -3231,6 +3231,136 @@ mod tests {
     }
 
     #[test]
+    fn render_only_live_explored_coalesces_reads_across_mixed_calls_vt100() {
+        let width: u16 = 80;
+
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+
+        let mut proc = RenderOnlyProcessor::new(app_event_tx);
+
+        let base = ExecCommandEndEvent {
+            call_id: "unused".into(),
+            process_id: None,
+            turn_id: "turn-1".into(),
+            command: vec!["bash".into(), "-lc".into(), "true".into()],
+            cwd: PathBuf::from("project"),
+            parsed_cmd: Vec::new(),
+            source: ExecCommandSource::Agent,
+            interaction_input: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            aggregated_output: String::new(),
+            exit_code: 0,
+            duration: std::time::Duration::from_millis(1),
+            formatted_output: String::new(),
+        };
+
+        // Simulate a "mixed" exploring call that ends in a Read, followed by another
+        // Read of the same file. The renderer should coalesce consecutive Read lines
+        // even when they come from different calls.
+        for (id, parsed_cmd) in [
+            (
+                "explore-1",
+                vec![
+                    ParsedCommand::ListFiles {
+                        cmd: "ls -la".into(),
+                        path: Some(".codexpotter".into()),
+                    },
+                    ParsedCommand::Read {
+                        cmd: "sed -n '1,240p'".into(),
+                        name: "resume_design.md".into(),
+                        path: PathBuf::from(".codexpotter/resume_design.md"),
+                    },
+                ],
+            ),
+            (
+                "explore-2",
+                vec![ParsedCommand::Read {
+                    cmd: "sed -n '240,520p'".into(),
+                    name: "resume_design.md".into(),
+                    path: PathBuf::from(".codexpotter/resume_design.md"),
+                }],
+            ),
+        ] {
+            proc.handle_codex_event(Event {
+                id: id.into(),
+                msg: EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                    call_id: id.into(),
+                    parsed_cmd,
+                    ..base.clone()
+                }),
+            });
+        }
+
+        assert!(rx.try_recv().is_err());
+
+        let Some(explored) = proc.pending_exploring_cell.as_ref() else {
+            panic!("expected a pending explored cell");
+        };
+        let mut exploring_lines = Vec::new();
+        exploring_lines.push(Line::from(""));
+        exploring_lines.extend(explored.display_lines(width));
+
+        let prompt_lines =
+            history_cell::new_user_prompt("test prompt".to_string()).display_lines(width);
+
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx,
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
+        bottom_pane.set_task_running(true);
+        if let Some(status) = bottom_pane.status_indicator_mut() {
+            status.pause_timer_at(Instant::now());
+        }
+
+        let pane_height = bottom_pane.desired_height(width).max(1);
+        let exploring_height = u16::try_from(exploring_lines.len()).unwrap_or(u16::MAX);
+        let viewport_height = pane_height.saturating_add(exploring_height);
+        let prompt_height = u16::try_from(prompt_lines.len()).unwrap_or(u16::MAX);
+        let height = prompt_height.saturating_add(viewport_height).max(1);
+
+        let backend = VT100Backend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).expect("create terminal");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                ratatui::widgets::Clear.render(area, frame.buffer_mut());
+
+                let prompt_height = prompt_height.min(area.height);
+                let prompt_area =
+                    ratatui::layout::Rect::new(area.x, area.y, area.width, prompt_height);
+                let viewport_area = ratatui::layout::Rect::new(
+                    area.x,
+                    area.y + prompt_height,
+                    area.width,
+                    area.height.saturating_sub(prompt_height),
+                );
+
+                ratatui::widgets::Paragraph::new(ratatui::text::Text::from(prompt_lines))
+                    .render(prompt_area, frame.buffer_mut());
+                render_render_only_viewport(
+                    viewport_area,
+                    frame.buffer_mut(),
+                    &bottom_pane,
+                    exploring_lines,
+                );
+            })
+            .expect("draw");
+
+        assert_snapshot!(
+            "render_only_live_explored_coalesces_mixed_call_reads_vt100",
+            terminal.backend().vt100().screen().contents()
+        );
+    }
+
+    #[test]
     fn render_only_ctrl_c_preserves_pending_explored_output_vt100() {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyEvent;

@@ -280,87 +280,64 @@ impl ExecCell {
             },
         ]));
 
-        let mut calls = self.calls.clone();
         let mut out_indented = Vec::new();
-        while !calls.is_empty() {
-            let mut call = calls.remove(0);
-            if call
-                .parsed
-                .iter()
-                .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }))
-            {
-                while let Some(next) = calls.first() {
-                    if next
-                        .parsed
-                        .iter()
-                        .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }))
-                    {
-                        call.parsed.extend(next.parsed.clone());
-                        calls.remove(0);
-                    } else {
-                        break;
-                    }
+        let mut pending_reads: Vec<String> = Vec::new();
+        let mut display_items: Vec<(&'static str, Vec<Span<'static>>)> = Vec::new();
+
+        let flush_pending_reads =
+            |pending_reads: &mut Vec<String>,
+             display_items: &mut Vec<(&'static str, Vec<Span<'static>>)>| {
+                if pending_reads.is_empty() {
+                    return;
                 }
-            }
 
-            let reads_only = call
-                .parsed
-                .iter()
-                .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }));
-
-            let call_lines: Vec<(&str, Vec<Span<'static>>)> = if reads_only {
-                let names = call
-                    .parsed
-                    .iter()
-                    .map(|parsed| match parsed {
-                        ParsedCommand::Read { name, .. } => name.clone(),
-                        _ => unreachable!(),
-                    })
-                    .unique();
-                vec![(
+                let names = pending_reads.drain(..).unique();
+                display_items.push((
                     "Read",
-                    Itertools::intersperse(names.into_iter().map(Into::into), ", ".dim()).collect(),
-                )]
-            } else {
-                let mut lines = Vec::new();
-                for parsed in &call.parsed {
-                    match parsed {
-                        ParsedCommand::Read { name, .. } => {
-                            lines.push(("Read", vec![name.clone().into()]));
-                        }
-                        ParsedCommand::ListFiles { cmd, path } => {
-                            lines.push(("List", vec![path.clone().unwrap_or(cmd.clone()).into()]));
-                        }
-                        ParsedCommand::Search { cmd, query, path } => {
-                            let spans = match (query, path) {
-                                (Some(q), Some(p)) => {
-                                    vec![q.clone().into(), " in ".dim(), p.clone().into()]
-                                }
-                                (Some(q), None) => vec![q.clone().into()],
-                                _ => vec![cmd.clone().into()],
-                            };
-                            lines.push(("Search", spans));
-                        }
-                        ParsedCommand::Unknown { cmd } => {
-                            lines.push(("Run", vec![cmd.clone().into()]));
-                        }
-                    }
-                }
-                lines
+                    Itertools::intersperse(names.map(Into::into), ", ".dim()).collect(),
+                ));
             };
 
-            for (title, line) in call_lines {
-                let line = Line::from(line);
-                let initial_indent = Line::from(vec![title.cyan(), " ".into()]);
-                let subsequent_indent = " ".repeat(initial_indent.width()).into();
-                let wrapped = word_wrap_line(
-                    &line,
-                    RtOptions::new(width as usize)
-                        .initial_indent(initial_indent)
-                        .subsequent_indent(subsequent_indent),
-                );
-                push_owned_lines(&wrapped, &mut out_indented);
+        for call in &self.calls {
+            for parsed in &call.parsed {
+                match parsed {
+                    ParsedCommand::Read { name, .. } => pending_reads.push(name.clone()),
+                    ParsedCommand::ListFiles { cmd, path } => {
+                        flush_pending_reads(&mut pending_reads, &mut display_items);
+                        display_items
+                            .push(("List", vec![path.clone().unwrap_or(cmd.clone()).into()]));
+                    }
+                    ParsedCommand::Search { cmd, query, path } => {
+                        flush_pending_reads(&mut pending_reads, &mut display_items);
+                        let spans = match (query, path) {
+                            (Some(q), Some(p)) => {
+                                vec![q.clone().into(), " in ".dim(), p.clone().into()]
+                            }
+                            (Some(q), None) => vec![q.clone().into()],
+                            _ => vec![cmd.clone().into()],
+                        };
+                        display_items.push(("Search", spans));
+                    }
+                    ParsedCommand::Unknown { cmd } => {
+                        flush_pending_reads(&mut pending_reads, &mut display_items);
+                        display_items.push(("Run", vec![cmd.clone().into()]));
+                    }
+                }
             }
+        }
+        flush_pending_reads(&mut pending_reads, &mut display_items);
+
+        for (title, line) in display_items {
+            let line = Line::from(line);
+            let initial_indent = Line::from(vec![title.cyan(), " ".into()]);
+            let subsequent_indent = " ".repeat(initial_indent.width()).into();
+            let wrapped = word_wrap_line(
+                &line,
+                RtOptions::new(width as usize)
+                    .initial_indent(initial_indent)
+                    .subsequent_indent(subsequent_indent),
+            );
+            push_owned_lines(&wrapped, &mut out_indented);
         }
 
         out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
@@ -638,6 +615,65 @@ mod tests {
     use super::*;
     use codex_protocol::protocol::ExecCommandSource;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn explored_reads_are_coalesced_across_mixed_calls() {
+        use std::path::PathBuf;
+
+        let mut cell = ExecCell::new(
+            ExecCall {
+                call_id: "call-1".to_string(),
+                command: vec!["bash".into(), "-lc".into(), "true".into()],
+                parsed: vec![
+                    ParsedCommand::ListFiles {
+                        cmd: "ls -la".into(),
+                        path: Some(".codexpotter".into()),
+                    },
+                    ParsedCommand::Read {
+                        cmd: "sed -n '1,200p'".into(),
+                        name: "resume_design.md".into(),
+                        path: PathBuf::from(".codexpotter/resume_design.md"),
+                    },
+                ],
+                output: Some(CommandOutput {
+                    exit_code: 0,
+                    aggregated_output: String::new(),
+                    formatted_output: String::new(),
+                }),
+                source: ExecCommandSource::Agent,
+                start_time: None,
+                duration: None,
+                interaction_input: None,
+            },
+            false,
+        );
+
+        cell.calls.push(ExecCall {
+            call_id: "call-2".to_string(),
+            command: vec!["bash".into(), "-lc".into(), "true".into()],
+            parsed: vec![ParsedCommand::Read {
+                cmd: "sed -n '200,400p'".into(),
+                name: "resume_design.md".into(),
+                path: PathBuf::from(".codexpotter/resume_design.md"),
+            }],
+            output: Some(CommandOutput {
+                exit_code: 0,
+                aggregated_output: String::new(),
+                formatted_output: String::new(),
+            }),
+            source: ExecCommandSource::Agent,
+            start_time: None,
+            duration: None,
+            interaction_input: None,
+        });
+
+        let lines = plain_strings(&cell.exploring_display_lines(80));
+        let read_lines = lines
+            .iter()
+            .filter(|line| line.contains("Read resume_design.md"))
+            .count();
+        assert_eq!(read_lines, 1);
+    }
 
     fn plain_strings(lines: &[Line<'_>]) -> Vec<String> {
         lines
