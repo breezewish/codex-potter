@@ -1,3 +1,10 @@
+//! Update check utilities for CodexPotter.
+//!
+//! # Divergence from upstream Codex CLI
+//!
+//! CodexPotter checks for updates against the CodexPotter GitHub releases feed and stores cached
+//! state under `~/.codexpotter/version.json`. See `tui/AGENTS.md`.
+
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;

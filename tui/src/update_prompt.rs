@@ -1,3 +1,10 @@
+//! Startup update prompt.
+//!
+//! # Divergence from upstream Codex CLI
+//!
+//! This prompt is driven by CodexPotter's update mechanism (release feed, version scheme, and
+//! update commands) and therefore differs from upstream Codex CLI. See `tui/AGENTS.md`.
+
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;

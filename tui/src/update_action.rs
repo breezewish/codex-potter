@@ -1,3 +1,10 @@
+//! Self-update detection for CodexPotter.
+//!
+//! # Divergence from upstream Codex CLI
+//!
+//! CodexPotter is distributed separately and therefore uses different update commands and
+//! environment-variable contracts than upstream Codex CLI. See `tui/AGENTS.md`.
+
 /// Update action the CLI should perform after the TUI exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateAction {

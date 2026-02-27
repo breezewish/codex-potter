@@ -1,3 +1,10 @@
+//! Terminal + event loop wrapper used by the CodexPotter TUI.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! Upstream Codex CLI can emit desktop notifications while the terminal is unfocused; `codex-potter`
+//! intentionally does not implement that integration. See `tui/AGENTS.md`.
+
 use std::fmt;
 use std::future::Future;
 use std::io::IsTerminal;

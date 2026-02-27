@@ -33,7 +33,7 @@ Divergences must be documented properly so that they are not rolled back when sy
 
 ### Message Items
 
-- Reasoning messages are always not renderred.
+- Reasoning messages are never rendered.
 - Multiple Ran items with successful execution status are collapsed into one item.
 - "Explored" Read lines are coalesced across _mixed_ exploring calls (e.g. `ListFiles` +
   `Read`) to avoid duplicated `Read X` lines when the same file is read in adjacent calls. This is
@@ -50,6 +50,9 @@ Divergences must be documented properly so that they are not rolled back when sy
 
 - Codex-potter additionally provides a customized banner on startup
 - Codex-potter auto retry on stream/network errors.
+- Update notifications / self-update are CodexPotter-specific (release feed, tag/version scheme,
+  and on-disk state under `~/.codexpotter/`), so behavior differs from upstream Codex CLI.
+- No desktop notifications when the terminal is unfocused.
 - Unneeded logics and codes in codex TUI are intentionally removed to keep code tidy and focus (codex-potter's TUI is a _subset_ of codex's TUI):
   - /command picker, `?` shortcuts overlay, /model selection, /resume selection
   - Rewind (esc)
@@ -59,7 +62,7 @@ Divergences must be documented properly so that they are not rolled back when sy
 - codex-potter explicitly forbids `pub(crate)` visibility in TUI code; only `pub` and private items are allowed.
 - codex-potter does not use Bazel.
 
-### Convensions
+### Conventions
 
 - TUI is stateless, should be fully driven by `EventMsg`. Codex-potter has some customized rendering logic, and they are all converted into customized `EventMsg` variants (prefixed with `Potter`), so that TUI is kept as a pure rendering module without any special logic for codex-potter.
 
