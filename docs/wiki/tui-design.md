@@ -129,6 +129,10 @@ How it works:
 - These calls are accumulated into `RenderOnlyProcessor::pending_exploring_cell` instead of being
   immediately committed to the transcript.
 - While pending, the exploring block is rendered in the transient area above the bottom pane.
+- Rendering coalesces adjacent `Read` parsed commands across call boundaries (including *mixed*
+  calls like `ListFiles` + `Read`) and deduplicates file names within each contiguous `Read` block.
+  This intentionally diverges from upstream `codex-rs/tui`, which only coalesces consecutive
+  read-only calls.
 - The pending exploring cell is **flushed** (inserted as a single history cell) before events that
   would otherwise change ordering or insert unrelated cells (e.g., agent output, warnings, turn end).
 

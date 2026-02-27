@@ -7,6 +7,18 @@ so that users switching between codex and codex-potter have a consistent experie
 
 Unless explicitly documented below, changes should preserve parity.
 
+**Explicit Divergences:**
+
+Content below describes the explicit divergences in codex-potter's TUI behavior compared to upstream codex's TUI.
+
+When introducing new changes, you must first identify whether the change is a divergence from upstream codex's TUI behavior, or
+it may be a change to make codex-potter's TUI more aligned with upstream codex's TUI.
+
+Divergences must be documented properly so that they are not rolled back when syncing changes from upstream:
+
+- Divergences must be documented in this file, keep words concise but clear, and be specific about the behavior in codex-potter's TUI.
+- Divergences must be documented in doc comments.
+
 ### Text Box
 
 - No `/` command picker popup.
@@ -23,6 +35,9 @@ Unless explicitly documented below, changes should preserve parity.
 
 - Reasoning messages are always not renderred.
 - Multiple Ran items with successful execution status are collapsed into one item.
+- "Explored" Read lines are coalesced across _mixed_ exploring calls (e.g. `ListFiles` +
+  `Read`) to avoid duplicated `Read X` lines when the same file is read in adjacent calls. This is
+  a deliberate divergence from upstream behavior; keep it when syncing.
 - Additional CodexPotter items (e.g. project creation hints, round hints, project-finished summary on success).
 
 ### Shimmer
