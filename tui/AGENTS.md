@@ -25,6 +25,7 @@ Divergences must be documented properly so that they are not rolled back when sy
 - No `?` shortcuts overlay (treat `?` as a literal character).
 - `Tab` inserts a literal tab character (`\t`) into the composer.
 - Supports `$` skills picker.
+- Composer placeholder text is `Assign new task to CodexPotter` (upstream: `Ask Codex to do anything`).
 - No `Esc`-driven UX (no backtrack priming; `Esc` only dismisses popups).
 - No steer mode (always queue).
 - No image pasting support.
@@ -35,7 +36,7 @@ Divergences must be documented properly so that they are not rolled back when sy
 ### Message Items
 
 - Reasoning messages are never rendered.
-- Multiple Ran items with successful execution status are collapsed into one item.
+- Successful non-user-shell Ran items suppress output preview and adjacent ones are collapsed into one item.
 - "Explored" Read lines are coalesced across _mixed_ exploring calls (e.g. `ListFiles` +
   `Read`) to avoid duplicated `Read X` lines when the same file is read in adjacent calls. This is
   a deliberate divergence from upstream behavior; keep it when syncing.

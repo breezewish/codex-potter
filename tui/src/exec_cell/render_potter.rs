@@ -1,3 +1,11 @@
+//! CodexPotter-specific exec cell rendering helpers.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! Upstream Codex renders output previews for successful `Ran` tool calls. `codex-potter` keeps
+//! the transcript compact by suppressing output previews for successful non-user-shell commands
+//! and by collapsing adjacent successful `Ran` items into one cell. See `tui/AGENTS.md`.
+
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -10,6 +18,11 @@ use crate::render::highlight::highlight_bash_to_lines;
 use super::model::ExecCall;
 use super::model::ExecCell;
 
+/// Return whether a successful `Ran` call should suppress its output preview.
+///
+/// This is applied to non-user-shell commands (tool calls) that succeeded. These calls are
+/// generally used for internal automation and can be noisy, so `codex-potter` renders only the
+/// command header and skips the output block.
 pub fn should_suppress_success_ran_output(call: &ExecCall) -> bool {
     call.output
         .as_ref()
@@ -18,6 +31,7 @@ pub fn should_suppress_success_ran_output(call: &ExecCall) -> bool {
         && !call.is_unified_exec_interaction()
 }
 
+/// Render header lines for a coalesced "successful Ran" cell containing multiple calls.
 pub fn coalesced_success_ran_display_lines(cell: &ExecCell, width: u16) -> Vec<Line<'static>> {
     debug_assert!(
         !cell.calls.is_empty(),

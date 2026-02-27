@@ -68,6 +68,10 @@ pub async fn run_global_gitignore_prompt(
     result
 }
 
+/// Run the prompt using an existing [`Tui`] session.
+///
+/// This avoids tearing down and re-initializing the terminal between prompts, which can race with
+/// crossterm's stdin reader and break subsequent cursor-position queries.
 pub async fn run_global_gitignore_prompt_with_tui(
     tui: &mut Tui,
     global_gitignore_path_display: String,

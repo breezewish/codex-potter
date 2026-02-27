@@ -19,6 +19,10 @@ use serde::Serialize;
 
 const MAX_ENTRIES: usize = 500;
 
+/// Persistent prompt history backed by a JSONL file.
+///
+/// This is a deliberately small, text-only log used by CodexPotter's render-only runner. See the
+/// module docs for how this differs from upstream Codex.
 pub struct PromptHistoryStore {
     path: Option<PathBuf>,
     entries: Vec<HistoryEntry>,
@@ -26,10 +30,15 @@ pub struct PromptHistoryStore {
 }
 
 impl PromptHistoryStore {
+    /// Create a store that loads from the default history path (if any).
     pub fn new() -> Self {
         Self::new_with_path(resolve_history_path())
     }
 
+    /// Create a store backed by the provided history file path.
+    ///
+    /// This is primarily used by tests. When `path` is `None`, persistence is disabled and the
+    /// store is purely in-memory.
     pub fn new_with_path(path: Option<PathBuf>) -> Self {
         let mut entries: Vec<HistoryEntry> = Vec::new();
         let mut log_id = 0u64;
@@ -52,10 +61,18 @@ impl PromptHistoryStore {
         }
     }
 
+    /// Return the current history metadata as `(log_id, entry_count)`.
+    ///
+    /// `log_id` is derived from the backing file metadata (inode on Unix). Callers can use this to
+    /// detect when the history file was replaced between requests.
     pub fn metadata(&self) -> (u64, usize) {
         (self.log_id, self.entries.len())
     }
 
+    /// Look up a history entry by `(log_id, offset)` and return its text.
+    ///
+    /// Returns `None` when `log_id` does not match the current store (history file changed) or
+    /// when the `offset` is out of bounds.
     pub fn lookup_text(&self, log_id: u64, offset: usize) -> Option<String> {
         if self.log_id != log_id {
             return None;
@@ -63,6 +80,8 @@ impl PromptHistoryStore {
         self.entries.get(offset).map(|entry| entry.text.clone())
     }
 
+    /// Record a prompt submission (trimmed), dedupe consecutive duplicates, and persist
+    /// best-effort.
     pub fn record_submission(&mut self, text: &str) {
         let text = text.trim();
         if text.is_empty() {

@@ -18,6 +18,8 @@
 //! - No steer mode: <kbd>Enter</kbd> queues the message instead of submitting immediately.
 //! - The skills picker is driven by `$`-mentions.
 //! - No image pasting support (text-only paste).
+//! - Placeholder text uses CodexPotter wording (`Assign new task to CodexPotter`) rather than
+//!   upstream (`Ask Codex to do anything`).
 //!
 //! # Key Event Routing
 //!
