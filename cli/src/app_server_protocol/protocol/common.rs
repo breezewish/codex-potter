@@ -230,7 +230,7 @@ mod tests {
 
         let value = serde_json::to_value(&request).expect("serialize request");
         assert_eq!(value["method"], "initialize");
-        assert_eq!(value["id"], 3);
+        assert_eq!(value["id"], 4);
         assert_eq!(value["params"]["clientInfo"]["name"], "codex-potter");
     }
 }

@@ -33,6 +33,7 @@ use crate::potter_stream_recovery::ContinueRetryDecision;
 use crate::potter_stream_recovery::PotterStreamRecovery;
 use anyhow::Context;
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -617,6 +618,23 @@ fn handle_codex_event(
     recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) {
+    // `codex-potter` uses `thread/rollback` internally as a best-effort optimization for stream
+    // recovery. The app-server currently forwards raw `codex/event/*` notifications for every core
+    // event, including rollback lifecycle events that are UI-irrelevant (or even confusing) for
+    // CodexPotter users.
+    //
+    // In particular, `ThreadRollbackFailed` errors must not be allowed to end the round, since
+    // recovery continues without rollback when the server rejects it (for example when a turn is
+    // still in progress).
+    if let EventMsg::Error(err) = &event.msg
+        && err.codex_error_info == Some(CodexErrorInfo::ThreadRollbackFailed)
+    {
+        return;
+    }
+    if matches!(event.msg, EventMsg::ThreadRolledBack(_)) {
+        return;
+    }
+
     let event_id = event.id.clone();
     let mut should_forward = true;
     let mut round_outcome: Option<PotterRoundOutcome> = None;
@@ -894,6 +912,7 @@ mod stream_recovery_tests {
     use super::*;
     use codex_protocol::protocol::AgentMessageDeltaEvent;
     use codex_protocol::protocol::CodexErrorInfo;
+    use codex_protocol::protocol::ThreadRolledBackEvent;
     use codex_protocol::protocol::TurnCompleteEvent;
     use pretty_assertions::assert_eq;
 
@@ -1086,6 +1105,75 @@ mod stream_recovery_tests {
             action_rx.try_recv().is_err(),
             "expected no continue action after giving up"
         );
+    }
+
+    #[test]
+    fn thread_rollback_failed_error_is_suppressed() {
+        let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+        let (action_tx, mut action_rx) = unbounded_channel::<RecoveryAction>();
+        let mut recovery = StreamRecoveryContext {
+            stream_recovery: PotterStreamRecovery::new(),
+            recovery_action_tx: action_tx,
+            has_sent_turn_start: true,
+            has_finished_round: false,
+            last_turn_start_was_recovery_continue: false,
+            recovery_continue_turn_starts_since_activity: 0,
+        };
+
+        handle_codex_event(
+            Event {
+                id: "rollback-failed".into(),
+                msg: EventMsg::Error(ErrorEvent {
+                    message: "Cannot rollback while a turn is in progress.".to_string(),
+                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+                }),
+            },
+            &mut recovery,
+            &event_tx,
+        );
+
+        assert!(
+            event_rx.try_recv().is_err(),
+            "expected ThreadRollbackFailed to be suppressed"
+        );
+        assert!(
+            action_rx.try_recv().is_err(),
+            "expected no recovery action from ThreadRollbackFailed"
+        );
+        assert!(!recovery.has_finished_round, "round should continue");
+    }
+
+    #[test]
+    fn thread_rolled_back_event_is_suppressed() {
+        let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+        let (action_tx, mut action_rx) = unbounded_channel::<RecoveryAction>();
+        let mut recovery = StreamRecoveryContext {
+            stream_recovery: PotterStreamRecovery::new(),
+            recovery_action_tx: action_tx,
+            has_sent_turn_start: true,
+            has_finished_round: false,
+            last_turn_start_was_recovery_continue: false,
+            recovery_continue_turn_starts_since_activity: 0,
+        };
+
+        handle_codex_event(
+            Event {
+                id: "rolled-back".into(),
+                msg: EventMsg::ThreadRolledBack(ThreadRolledBackEvent { num_turns: 1 }),
+            },
+            &mut recovery,
+            &event_tx,
+        );
+
+        assert!(
+            event_rx.try_recv().is_err(),
+            "expected ThreadRolledBack to be suppressed"
+        );
+        assert!(
+            action_rx.try_recv().is_err(),
+            "expected no recovery action from ThreadRolledBack"
+        );
+        assert!(!recovery.has_finished_round, "round should continue");
     }
 }
 
@@ -1297,6 +1385,7 @@ echo "$rollback" | grep -q '"numTurns":1' || {{
   echo "expected numTurns=1, got: $rollback" >&2
   exit 1
 }}
+echo '{{"method":"codex/event/thread_rolled_back","params":{{"id":"rb-1","msg":{{"type":"thread_rolled_back","num_turns":1}}}}}}'
 echo '{{"id":5,"result":{{"thread":{{"id":"00000000-0000-0000-0000-000000000000","path":"rollout.jsonl"}}}}}}'
 
 # third turn/start request (automatic Continue after rollback)
