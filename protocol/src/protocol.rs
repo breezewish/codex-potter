@@ -140,7 +140,8 @@ pub enum EventMsg {
     ///
     /// When the model stream disconnects mid-turn and CodexPotter decides to recover by issuing
     /// a follow-up `continue` prompt, the backend emits this event so the TUI can render a
-    /// reconnecting status without inferring control-plane state.
+    /// CodexPotter retry block (separate from upstream `StreamError` status-indicator updates)
+    /// without inferring control-plane state.
     PotterStreamRecoveryUpdate {
         /// 1-based attempt number within the current continuous-error streak.
         attempt: u32,

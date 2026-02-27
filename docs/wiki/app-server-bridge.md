@@ -53,8 +53,9 @@ The bridge runs one thread and typically one turn per round:
 
 Exception: on retryable stream/network errors, the control plane keeps the round alive by issuing
 follow-up `continue` turns (additional `turn/start`) within the same round/process. The bridge
-emits `PotterStreamRecovery*` marker events so the TUI can render a reconnecting status without
-inferring control-plane state.
+emits `PotterStreamRecovery*` marker events so the TUI can render a CodexPotter retry block
+(separate from upstream `StreamError` status-indicator updates) without inferring control-plane
+state.
 
 ### 1) Spawn (`codex … app-server`)
 
