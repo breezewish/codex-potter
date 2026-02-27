@@ -7,17 +7,16 @@ so that users switching between codex and codex-potter have a consistent experie
 
 Unless explicitly documented below, changes should preserve parity.
 
-**Explicit Divergences:**
+## Explicit Divergences
 
-Content below describes the explicit divergences in codex-potter's TUI behavior compared to upstream codex's TUI.
+Content below lists explicit divergences in codex-potter's TUI compared to upstream codex's TUI.
 
-When introducing new changes, you must first identify whether the change is a divergence from upstream codex's TUI behavior, or
-it may be a change to make codex-potter's TUI more aligned with upstream codex's TUI.
+When introducing new changes, first identify whether it is a divergence from upstream or it makes the code more aligned with upstream.
+Divergences must be documented in places below to avoid regression when syncing changes from upstream:
 
-Divergences must be documented properly so that they are not rolled back when syncing changes from upstream:
-
-- Divergences must be documented in this file, keep words concise but clear, and be specific about the behavior in codex-potter's TUI.
-- Divergences must be documented in doc comments.
+- Record divergences in this file, keep words concise but clear, be specific about the new behavior.
+- Record divergences in doc comments.
+- Cover divergences via proper tests (unit / end to end).
 
 ### Text Box
 
@@ -25,47 +24,49 @@ Divergences must be documented properly so that they are not rolled back when sy
 - No `?` shortcuts overlay (treat `?` as a literal character).
 - `Tab` inserts a literal tab character (`\t`) into the composer.
 - Supports `$` skills picker.
-- Composer placeholder text is `Assign new task to CodexPotter` (upstream: `Ask Codex to do anything`).
+- Composer placeholder text is customized.
 - No `Esc`-driven UX (no backtrack priming; `Esc` only dismisses popups).
 - No steer mode (always queue).
 - No image pasting support.
 - Bottom pane footer messages are customized.
 - Better word jump by using ICU4X word segmentations.
-- Prompt history is persisted locally under `~/.codexpotter/history.jsonl` and served by the render-only runner.
+- Prompt history is persisted under `~/.codexpotter/history.jsonl`.
 
 ### Message Items
 
 - Reasoning messages are never rendered.
-- Successful non-user-shell Ran items suppress output preview and adjacent ones are collapsed into one item.
-- "Explored" Read lines are coalesced across _mixed_ exploring calls (e.g. `ListFiles` +
-  `Read`) to avoid duplicated `Read X` lines when the same file is read in adjacent calls. This is
-  a deliberate divergence from upstream behavior; keep it when syncing.
-- Additional CodexPotter items (e.g. project creation hints, round hints, project-finished summary on success).
+- Successful `Ran` items suppress output preview and adjacent ones are collapsed into one.
+- `Explored` items are more aggressively collapsed to avoid duplicates.
+- Additional codex-potter items (e.g. project creation hints, round hints, project-finished summary on success).
 
 ### Shimmer
 
 - Round prefix is added to shimmer lines.
-- Remaining context is moved into the shimmer area.
+- Remaining context window is moved into the shimmer area.
 - No `esc to interrupt` message, since we interrupt using `Ctrl-C`.
 
 ### Other differences
 
-- Codex-potter additionally provides a customized banner on startup
-- Codex-potter may show a startup prompt recommending adding `.codexpotter/` to the user's global gitignore.
-- Codex-potter auto retry on stream/network errors.
-- Update notifications / self-update are CodexPotter-specific (release feed, tag/version scheme,
-  and on-disk state under `~/.codexpotter/`), so behavior differs from upstream Codex CLI.
+Behavior related
+
+- A customized banner on startup
+- Additionally shows gitignore startup hint
+- Auto retry on errors.
+- Customized update notification / self-update (and on-disk state under `~/.codexpotter/`).
 - No desktop notifications when the terminal is unfocused.
+
+Engineering related:
+
 - Unneeded logics and codes in codex TUI are intentionally removed to keep code tidy and focus (codex-potter's TUI is a _subset_ of codex's TUI):
   - /command picker, `?` shortcuts overlay, /model selection, /resume selection
   - Rewind (esc)
   - Approval flows
-  - Other interactive features not needed in codex-potter
-  - Unneeded tests and snapshots
+  - Other interactive features not needed
+  - Unneeded codes, tests and snapshots
 - codex-potter explicitly forbids `pub(crate)` visibility in TUI code; only `pub` and private items are allowed.
 - codex-potter does not use Bazel.
 
-### Conventions
+## Conventions
 
 - TUI is stateless, should be fully driven by `EventMsg`. Codex-potter has some customized rendering logic, and they are all converted into customized `EventMsg` variants (prefixed with `Potter`), so that TUI is kept as a pure rendering module without any special logic for codex-potter.
 
