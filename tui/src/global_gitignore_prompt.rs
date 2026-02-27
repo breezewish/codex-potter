@@ -1,3 +1,11 @@
+//! Global gitignore recommendation prompt.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! `codex-potter` may prompt the user on startup to add `.codexpotter/` to their global gitignore
+//! so CodexPotter state files are ignored by default. Upstream Codex TUI does not show this
+//! prompt. See `tui/AGENTS.md`.
+
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;

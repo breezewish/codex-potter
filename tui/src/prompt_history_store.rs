@@ -1,3 +1,12 @@
+//! Persistent prompt history store.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! Upstream Codex manages prompt history in the core/session layer and serves it via protocol
+//! messages. `codex-potter` keeps a simple text-only history log under
+//! `~/.codexpotter/history.jsonl` and serves `Op::GetHistoryEntryRequest` directly from the
+//! render-only runner. See `tui/AGENTS.md`.
+
 use std::io;
 use std::io::Write;
 use std::path::Path;

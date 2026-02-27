@@ -340,15 +340,38 @@ fn handle_prompt_app_event(
             tui.insert_history_lines(lines);
         }
         AppEvent::CodexOp(Op::GetHistoryEntryRequest { offset, log_id }) => {
-            let entry = prompt_history.lookup_text(log_id, offset);
-            if bottom_pane
-                .composer_mut()
-                .on_history_entry_response(log_id, offset, entry)
-            {
-                tui.frame_requester().schedule_frame();
-            }
+            handle_prompt_history_entry_request(
+                tui.frame_requester(),
+                bottom_pane,
+                prompt_history,
+                log_id,
+                offset,
+            );
         }
         _ => {}
+    }
+}
+
+/// Handle an `Op::GetHistoryEntryRequest` by serving prompt history from the local store.
+///
+/// # Divergence (codex-potter)
+///
+/// `codex-potter` persists prompt history under `~/.codexpotter/history.jsonl` and answers history
+/// lookups directly in the TUI runner (rather than forwarding to an upstream core/session store).
+/// See `tui/src/prompt_history_store.rs` and `tui/AGENTS.md`.
+fn handle_prompt_history_entry_request(
+    frame_requester: crate::tui::FrameRequester,
+    bottom_pane: &mut BottomPane,
+    prompt_history: &crate::prompt_history_store::PromptHistoryStore,
+    log_id: u64,
+    offset: usize,
+) {
+    let entry = prompt_history.lookup_text(log_id, offset);
+    if bottom_pane
+        .composer_mut()
+        .on_history_entry_response(log_id, offset, entry)
+    {
+        frame_requester.schedule_frame();
     }
 }
 
@@ -1336,14 +1359,13 @@ impl RenderAppState {
             }
             AppEvent::CodexOp(op) => match op {
                 Op::GetHistoryEntryRequest { offset, log_id } => {
-                    let entry = self.prompt_history.lookup_text(log_id, offset);
-                    if self
-                        .bottom_pane
-                        .composer_mut()
-                        .on_history_entry_response(log_id, offset, entry)
-                    {
-                        tui.frame_requester().schedule_frame();
-                    }
+                    handle_prompt_history_entry_request(
+                        tui.frame_requester(),
+                        &mut self.bottom_pane,
+                        &self.prompt_history,
+                        log_id,
+                        offset,
+                    );
                 }
                 _ => {
                     let _ = self.codex_op_tx.send(op);

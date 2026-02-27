@@ -30,6 +30,7 @@ Divergences must be documented properly so that they are not rolled back when sy
 - No image pasting support.
 - Bottom pane footer messages are customized.
 - Better word jump by using ICU4X word segmentations.
+- Prompt history is persisted locally under `~/.codexpotter/history.jsonl` and served by the render-only runner.
 
 ### Message Items
 
@@ -49,6 +50,7 @@ Divergences must be documented properly so that they are not rolled back when sy
 ### Other differences
 
 - Codex-potter additionally provides a customized banner on startup
+- Codex-potter may show a startup prompt recommending adding `.codexpotter/` to the user's global gitignore.
 - Codex-potter auto retry on stream/network errors.
 - Update notifications / self-update are CodexPotter-specific (release feed, tag/version scheme,
   and on-disk state under `~/.codexpotter/`), so behavior differs from upstream Codex CLI.
