@@ -1,6 +1,17 @@
+//! Word-boundary helpers used by the composer for word-wise navigation and deletion.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! `codex-potter` uses ICU4X word segmentation (plus a small set of additional separator
+//! characters) to provide more predictable <kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd> and
+//! <kbd>Alt</kbd>+<kbd>Backspace</kbd> behavior across ASCII and non-ASCII text.
+//!
+//! See `tui/AGENTS.md` ("Better word jump by using ICU4X word segmentations").
+
 use icu_segmenter::WordSegmenter;
 use icu_segmenter::options::WordBreakInvariantOptions;
 
+/// ASCII punctuation treated as word separators in addition to ICU4X segmentation boundaries.
 pub const WORD_SEPARATORS: &str = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,6 +21,7 @@ struct Segment {
     is_whitespace: bool,
 }
 
+/// Return the byte index of the start of the previous word.
 pub fn beginning_of_previous_word(text: &str, cursor_pos: usize) -> usize {
     let cursor_pos = clamp_pos_to_char_boundary(text, cursor_pos);
     if cursor_pos == 0 {
@@ -35,6 +47,7 @@ pub fn beginning_of_previous_word(text: &str, cursor_pos: usize) -> usize {
     segments[segment_idx].start
 }
 
+/// Return the byte index of the end of the next word.
 pub fn end_of_next_word(text: &str, cursor_pos: usize) -> usize {
     let cursor_pos = clamp_pos_to_char_boundary(text, cursor_pos);
     if cursor_pos >= text.len() {

@@ -1,5 +1,13 @@
 //! A live status indicator that shows the *latest* log line emitted by the
 //! application while the agent is processing a long‑running task.
+//!
+//! # Divergences from upstream Codex TUI
+//!
+//! `codex-potter` uses this widget a bit differently:
+//!
+//! - The header may include an optional round prefix (e.g. `Round 2/10 · Working`).
+//! - Remaining context is rendered in the status line while a task is running.
+//! - We do not show an "esc to interrupt" hint; interruption uses <kbd>Ctrl</kbd>+<kbd>C</kbd>.
 
 use std::time::Duration;
 use std::time::Instant;
@@ -28,6 +36,7 @@ use crate::wrapping::word_wrap_lines;
 const DETAILS_MAX_LINES: usize = 3;
 const DETAILS_PREFIX: &str = "  └ ";
 
+/// Renders a live status line (with optional details) while a task is running.
 pub struct StatusIndicatorWidget {
     /// Animated header text (defaults to "Working").
     header: String,
@@ -46,8 +55,9 @@ pub struct StatusIndicatorWidget {
     animations_enabled: bool,
 }
 
-// Format elapsed seconds into a compact human-friendly form used by the status line.
-// Examples: 0s, 59s, 1m 00s, 59m 59s, 1h 00m 00s, 2h 03m 09s
+/// Format elapsed seconds into a compact, human-friendly form used by the status line.
+///
+/// Examples: `0s`, `59s`, `1m 00s`, `59m 59s`, `1h 00m 00s`, `2h 03m 09s`.
 pub fn fmt_elapsed_compact(elapsed_secs: u64) -> String {
     if elapsed_secs < 60 {
         return format!("{elapsed_secs}s");

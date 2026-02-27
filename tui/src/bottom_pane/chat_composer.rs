@@ -9,6 +9,16 @@
 //! - Turning raw key streams into explicit paste operations on platforms where terminals
 //!   don't provide reliable bracketed paste (notably Windows).
 //!
+//! # Divergences from upstream Codex TUI
+//!
+//! See `tui/AGENTS.md` for the canonical list. Highlights:
+//!
+//! - No `/` command picker popup and no `?` shortcuts overlay (`/` and `?` are inserted literally).
+//! - `Esc` only dismisses popups; there is no Esc-driven rewind/backtrack UX.
+//! - No steer mode: <kbd>Enter</kbd> queues the message instead of submitting immediately.
+//! - The skills picker is driven by `$`-mentions.
+//! - No image pasting support (text-only paste).
+//!
 //! # Key Event Routing
 //!
 //! Most key handling goes through [`ChatComposer::handle_key_event`], which dispatches to a
@@ -134,6 +144,11 @@ use std::time::Instant;
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
 
 /// Result returned when the user interacts with the text area.
+///
+/// # Divergence (codex-potter)
+///
+/// `codex-potter` does not implement "steer mode": pressing <kbd>Enter</kbd> queues the message for
+/// the runner (it does not submit immediately).
 #[derive(Debug, PartialEq)]
 pub enum InputResult {
     Submitted(String),
@@ -142,6 +157,7 @@ pub enum InputResult {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Serializable snapshot of the composer state that can be restored across turns.
 pub struct ChatComposerDraft {
     text: String,
     cursor: usize,
@@ -155,6 +171,7 @@ impl ChatComposerDraft {
     }
 }
 
+/// Bottom-pane chat input state machine.
 pub struct ChatComposer {
     textarea: TextArea,
     textarea_state: RefCell<TextAreaState>,

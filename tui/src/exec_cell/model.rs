@@ -5,6 +5,7 @@ use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::ExecCommandSource;
 
 #[derive(Clone, Debug, Default)]
+/// Captured output from a completed exec call.
 pub struct CommandOutput {
     pub exit_code: i32,
     /// The aggregated stderr + stdout interleaved.
@@ -14,6 +15,7 @@ pub struct CommandOutput {
 }
 
 #[derive(Debug, Clone)]
+/// One exec tool call, with optional output while streaming.
 pub struct ExecCall {
     pub call_id: String,
     pub command: Vec<String>,
@@ -26,6 +28,7 @@ pub struct ExecCall {
 }
 
 #[derive(Debug)]
+/// A rendered "Exec" history cell, composed of one or more [`ExecCall`]s.
 pub struct ExecCell {
     pub calls: Vec<ExecCall>,
     animations_enabled: bool,

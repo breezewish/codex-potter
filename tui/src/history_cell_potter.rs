@@ -1,3 +1,13 @@
+//! CodexPotter-specific history cells.
+//!
+//! # Divergences from upstream Codex TUI
+//!
+//! Upstream Codex does not render these cells. They are used to surface CodexPotter-specific
+//! runner behavior, such as multi-round iteration markers, project hints, stream recovery retries,
+//! and the final "session succeeded" summary.
+//!
+//! See `tui/AGENTS.md` ("Additional CodexPotter items" and "auto retry on stream/network errors").
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -16,6 +26,7 @@ use crate::ui_colors::secondary_color;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_lines;
 
+/// Render a marker that indicates an iteration round boundary.
 pub fn new_potter_round_started(current: u32, total: u32) -> PrefixedWrappedHistoryCell {
     let text: Text<'static> = Line::from(vec![
         Span::styled(
@@ -30,6 +41,7 @@ pub fn new_potter_round_started(current: u32, total: u32) -> PrefixedWrappedHist
     PrefixedWrappedHistoryCell::new(text, "• ".dim(), "  ")
 }
 
+/// Render a hint that points to the created project prompt file.
 pub fn new_potter_project_hint(user_prompt_file: PathBuf) -> PrefixedWrappedHistoryCell {
     let user_prompt_file = user_prompt_file.to_string_lossy().to_string();
     let text: Text<'static> =
@@ -37,6 +49,7 @@ pub fn new_potter_project_hint(user_prompt_file: PathBuf) -> PrefixedWrappedHist
     PrefixedWrappedHistoryCell::new(text, "  ↳ ".dim(), "    ")
 }
 
+/// Render the final multi-round summary block shown on success.
 pub fn new_potter_session_succeeded(
     rounds: u32,
     duration: Duration,
@@ -54,6 +67,7 @@ pub fn new_potter_session_succeeded(
 }
 
 #[derive(Debug)]
+/// History cell rendered at the end of a successful CodexPotter session.
 pub struct PotterSessionSucceededCell {
     rounds: u32,
     duration: Duration,
@@ -117,6 +131,7 @@ fn short_git_commit(commit: &str) -> String {
 }
 
 #[derive(Debug, Clone)]
+/// History cell shown while CodexPotter is retrying after a stream/network error.
 pub struct PotterStreamRecoveryRetryCell {
     pub attempt: u32,
     pub max_attempts: u32,
@@ -161,6 +176,7 @@ impl HistoryCell for PotterStreamRecoveryRetryCell {
 }
 
 #[derive(Debug, Clone)]
+/// History cell shown when CodexPotter gives up retrying after stream/network errors.
 pub struct PotterStreamRecoveryUnrecoverableCell {
     pub max_attempts: u32,
     pub error_message: String,

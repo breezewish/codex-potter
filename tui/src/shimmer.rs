@@ -1,3 +1,5 @@
+//! Shimmer text rendering helper used for animated status/exec indicators.
+
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
@@ -18,6 +20,7 @@ fn elapsed_since_start() -> Duration {
     start.elapsed()
 }
 
+/// Render `text` as a sequence of spans with a time-based shimmer highlight.
 pub fn shimmer_spans(text: &str) -> Vec<Span<'static>> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {

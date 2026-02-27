@@ -1,3 +1,8 @@
+//! Minimal text area implementation for the bottom-pane composer.
+//!
+//! This is intentionally self-contained (cursor movement, wrapping, word-wise navigation and
+//! deletion, and placeholder "elements" used to represent large pastes).
+
 use super::word_boundary;
 use crate::key_hint::is_altgr;
 use codex_protocol::user_input::ByteRange;
@@ -24,6 +29,7 @@ struct TextElement {
 }
 
 #[derive(Debug)]
+/// Editable text buffer with cursor and wrapping state.
 pub struct TextArea {
     text: String,
     cursor_pos: usize,
@@ -40,6 +46,7 @@ struct WrapCache {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
+/// Render state for [`TextArea`], tracking scroll position.
 pub struct TextAreaState {
     /// Index into wrapped lines of the first visible line.
     scroll: u16,

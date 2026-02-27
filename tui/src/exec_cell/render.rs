@@ -264,6 +264,15 @@ impl HistoryCell for ExecCell {
 }
 
 impl ExecCell {
+    /// Render the (Exploring/Explored) summary lines for an exploring exec cell.
+    ///
+    /// # Divergence (codex-potter)
+    ///
+    /// We intentionally coalesce consecutive `Read` items across *mixed* exploring calls (for
+    /// example `ListFiles` + `Read`) to avoid rendering duplicate `Read X` lines when the same file
+    /// is read in adjacent calls. Keep this behavior when syncing from upstream.
+    ///
+    /// Regression: `explored_reads_are_coalesced_across_mixed_calls`.
     fn exploring_display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut out: Vec<Line<'static>> = Vec::new();
         out.push(Line::from(vec![
@@ -281,13 +290,6 @@ impl ExecCell {
         ]));
 
         let mut out_indented = Vec::new();
-
-        // NOTE: Divergence from upstream Codex TUI.
-        //
-        // We intentionally coalesce consecutive `Read` items across *mixed* exploring calls
-        // (e.g. `ListFiles` + `Read`) to avoid rendering duplicate `Read X` lines when the same
-        // file is read in adjacent calls. Keep this behavior when syncing from upstream.
-        // Regression: explored_reads_are_coalesced_across_mixed_calls.
         let mut pending_reads: Vec<String> = Vec::new();
         let mut display_items: Vec<(&'static str, Vec<Span<'static>>)> = Vec::new();
 

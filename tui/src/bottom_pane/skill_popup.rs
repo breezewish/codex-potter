@@ -1,3 +1,13 @@
+//! Skills picker popup.
+//!
+//! The popup is triggered by `$`-mentions in the composer (`ChatComposer`), and allows the user to
+//! select a skill mention to insert into the input buffer.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! `codex-potter` keeps only the `$` skills picker; it intentionally omits other upstream pickers
+//! and overlays (see `tui/AGENTS.md`).
+
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -18,6 +28,7 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::text_formatting::truncate_text;
 
+/// A selectable item shown in the `$` skills picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionItem {
     pub display_name: String,
@@ -26,6 +37,7 @@ pub struct MentionItem {
     pub search_terms: Vec<String>,
 }
 
+/// Stateful popup UI for selecting a [`MentionItem`].
 pub struct SkillPopup {
     query: String,
     mentions: Vec<MentionItem>,

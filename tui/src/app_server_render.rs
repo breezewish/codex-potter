@@ -512,6 +512,8 @@ struct RenderOnlyProcessor {
     last_separator_elapsed_secs: Option<u64>,
     current_elapsed_secs: Option<u64>,
     pending_exploring_cell: Option<ExecCell>,
+    /// Divergence (codex-potter): coalesce consecutive successful non-shell `Ran` items into one
+    /// history cell.
     pending_success_ran_cell: Option<ExecCell>,
     pending_potter_session_succeeded: Option<PendingPotterSessionSucceeded>,
 }
@@ -1539,6 +1541,13 @@ impl RenderAppState {
     }
 }
 
+/// Returns true when `msg` is a reasoning/thinking stream event that should not be rendered as a
+/// transcript/history item.
+///
+/// # Divergence (codex-potter)
+///
+/// Reasoning messages are never rendered in the transcript; they are only used to update the live
+/// status header.
 fn should_filter_thinking_event(msg: &EventMsg) -> bool {
     matches!(
         msg,

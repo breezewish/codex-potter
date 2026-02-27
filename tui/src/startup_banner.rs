@@ -1,3 +1,10 @@
+//! Startup banner rendering.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! `codex-potter` renders a customized startup banner (ASCII art + directory/model line) to match
+//! the codex-potter CLI experience. See `tui/AGENTS.md`.
+
 use std::path::Path;
 
 use ratatui::prelude::*;
@@ -48,6 +55,7 @@ fn take_prefix_by_width(text: &str, max_width: usize) -> &str {
     &text[..end]
 }
 
+/// Build the startup banner as plain `Line`s, sized to fit within `width`.
 pub fn build_startup_banner_lines(
     width: u16,
     version: &str,
