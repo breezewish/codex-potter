@@ -30,10 +30,10 @@ use crate::app_server_protocol::TurnStartParams;
 use crate::app_server_protocol::TurnStartResponse;
 use crate::app_server_protocol::UserInput as ApiUserInput;
 use crate::potter_stream_recovery::ContinueRetryDecision;
+use crate::potter_stream_recovery::ContinueRetryPlan;
 use crate::potter_stream_recovery::PotterStreamRecovery;
 use anyhow::Context;
 use codex_protocol::ThreadId;
-use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -63,10 +63,10 @@ enum RecoveryAction {
 struct StreamRecoveryContext {
     stream_recovery: PotterStreamRecovery,
     recovery_action_tx: UnboundedSender<RecoveryAction>,
+    pending_continue_retry: Option<ContinueRetryPlan>,
     has_sent_turn_start: bool,
     has_finished_round: bool,
     last_turn_start_was_recovery_continue: bool,
-    recovery_continue_turn_starts_since_activity: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,10 +190,10 @@ async fn run_app_server_backend_inner(
     let mut recovery = StreamRecoveryContext {
         stream_recovery: PotterStreamRecovery::new(),
         recovery_action_tx,
+        pending_continue_retry: None,
         has_sent_turn_start: false,
         has_finished_round: false,
         last_turn_start_was_recovery_continue: false,
-        recovery_continue_turn_starts_since_activity: 0,
     };
 
     let result = async {
@@ -241,6 +241,7 @@ async fn run_app_server_backend_inner(
                     if matches!(op, Op::UserInput { .. }) {
                         recovery.has_sent_turn_start = true;
                         recovery.last_turn_start_was_recovery_continue = false;
+                        recovery.pending_continue_retry = None;
                     }
                     handle_op(
                         &thread_id,
@@ -265,17 +266,13 @@ async fn run_app_server_backend_inner(
                     match action {
                         RecoveryAction::RetryContinue { attempt } => {
                             recovery.has_sent_turn_start = true;
-                            if attempt >= 2
-                                && recovery.last_turn_start_was_recovery_continue
-                                && recovery.recovery_continue_turn_starts_since_activity > 0
-                            {
-                                // Best-effort optimization: remove the previous automatic
-                                // `Continue` turn from the thread history so stream recovery does
-                                // not accumulate multiple redundant `Continue` prompts.
+                            if attempt >= 2 && recovery.last_turn_start_was_recovery_continue {
+                                // Remove the previous automatic `Continue` turn from the thread
+                                // history so retries do not accumulate redundant `Continue`
+                                // prompts in the model context.
                                 //
-                                // If rollback fails (for example because the server doesn't
-                                // support it or the turn is still in progress), fall back to the
-                                // current behavior and still issue a follow-up `Continue`.
+                                // This is expected to succeed because stream recovery retries are
+                                // scheduled only after the previous turn has ended.
                                 thread_rollback(
                                     &thread_id,
                                     stdin.as_mut().context("codex app-server stdin unavailable")?,
@@ -287,7 +284,6 @@ async fn run_app_server_backend_inner(
                                 .await?;
                             }
                             recovery.last_turn_start_was_recovery_continue = true;
-                            recovery.recovery_continue_turn_starts_since_activity += 1;
                             handle_op(
                                 &thread_id,
                                 Op::UserInput {
@@ -506,16 +502,12 @@ async fn thread_rollback(
         },
     };
     send_message(stdin, &request).await?;
-
-    match read_until_response_or_error(stdin, lines, &request_id, recovery, event_tx).await? {
-        Ok(response) => {
-            // Best-effort validation: the shape is expected to match the v2 protocol, but stream
-            // recovery should not fail the whole session if the response is slightly different.
-            let _ = serde_json::from_value::<ThreadRollbackResponse>(response.result);
-            Ok(())
-        }
-        Err(_error) => Ok(()),
-    }
+    let response = read_until_response(stdin, lines, request_id, recovery, event_tx)
+        .await
+        .with_context(|| format!("thread/rollback thread_id={thread_id}"))?;
+    let _parsed: ThreadRollbackResponse =
+        serde_json::from_value(response.result).context("decode thread/rollback response")?;
+    Ok(())
 }
 
 async fn handle_op(
@@ -618,19 +610,10 @@ fn handle_codex_event(
     recovery: &mut StreamRecoveryContext,
     event_tx: &UnboundedSender<Event>,
 ) {
-    // `codex-potter` uses `thread/rollback` internally as a best-effort optimization for stream
-    // recovery. The app-server currently forwards raw `codex/event/*` notifications for every core
-    // event, including rollback lifecycle events that are UI-irrelevant (or even confusing) for
-    // CodexPotter users.
-    //
-    // In particular, `ThreadRollbackFailed` errors must not be allowed to end the round, since
-    // recovery continues without rollback when the server rejects it (for example when a turn is
-    // still in progress).
-    if let EventMsg::Error(err) = &event.msg
-        && err.codex_error_info == Some(CodexErrorInfo::ThreadRollbackFailed)
-    {
-        return;
-    }
+    // `codex-potter` uses `thread/rollback` internally to ensure stream recovery retries do not
+    // accumulate redundant automatic `Continue` turns in the thread history. The app-server
+    // forwards raw `codex/event/*` notifications for every core event, including rollback
+    // lifecycle events that are UI-irrelevant (or even confusing) for CodexPotter users.
     if matches!(event.msg, EventMsg::ThreadRolledBack(_)) {
         return;
     }
@@ -648,7 +631,7 @@ fn handle_codex_event(
     recovery.stream_recovery.observe_event(&event.msg);
 
     if was_in_retry_streak && !recovery.stream_recovery.is_in_retry_streak() {
-        recovery.recovery_continue_turn_starts_since_activity = 0;
+        recovery.pending_continue_retry = None;
         let _ = event_tx.send(Event {
             id: event.id.clone(),
             msg: EventMsg::PotterStreamRecoveryRecovered,
@@ -657,54 +640,72 @@ fn handle_codex_event(
 
     if let EventMsg::Error(err) = &event.msg
         && recovery.has_sent_turn_start
-        && let Some(decision) = recovery.stream_recovery.plan_retry(err)
     {
-        match decision {
-            ContinueRetryDecision::Retry(plan) => {
-                let _ = event_tx.send(Event {
-                    id: event.id.clone(),
-                    msg: EventMsg::PotterStreamRecoveryUpdate {
-                        attempt: plan.attempt,
-                        max_attempts: plan.max_attempts,
-                        error_message: err.message.clone(),
-                    },
-                });
-
-                let tx = recovery.recovery_action_tx.clone();
-                let action = RecoveryAction::RetryContinue {
-                    attempt: plan.attempt,
-                };
-                if plan.backoff.is_zero() {
-                    let _ = tx.send(action);
-                } else {
-                    tokio::spawn(async move {
-                        tokio::time::sleep(plan.backoff).await;
-                        let _ = tx.send(action);
+        if recovery.pending_continue_retry.is_some()
+            && codex_protocol::potter_stream_recovery::is_retryable_stream_error(err)
+        {
+            // A retryable error was already observed for the current turn. Wait for TurnComplete
+            // and then issue the planned automatic `Continue`.
+            should_forward = false;
+        } else if recovery.pending_continue_retry.is_none()
+            && let Some(decision) = recovery.stream_recovery.plan_retry(err)
+        {
+            match decision {
+                ContinueRetryDecision::Retry(plan) => {
+                    let _ = event_tx.send(Event {
+                        id: event.id.clone(),
+                        msg: EventMsg::PotterStreamRecoveryUpdate {
+                            attempt: plan.attempt,
+                            max_attempts: plan.max_attempts,
+                            error_message: err.message.clone(),
+                        },
+                    });
+                    recovery.pending_continue_retry = Some(plan);
+                }
+                ContinueRetryDecision::GiveUp {
+                    attempts,
+                    max_attempts,
+                } => {
+                    let _ = event_tx.send(Event {
+                        id: event.id.clone(),
+                        msg: EventMsg::PotterStreamRecoveryGaveUp {
+                            error_message: err.message.clone(),
+                            attempts,
+                            max_attempts,
+                        },
+                    });
+                    round_outcome = Some(PotterRoundOutcome::TaskFailed {
+                        message: format!(
+                            "{} (stream recovery gave up after {attempts}/{max_attempts} retries)",
+                            err.message
+                        ),
                     });
                 }
             }
-            ContinueRetryDecision::GiveUp {
-                attempts,
-                max_attempts,
-            } => {
-                let _ = event_tx.send(Event {
-                    id: event.id.clone(),
-                    msg: EventMsg::PotterStreamRecoveryGaveUp {
-                        error_message: err.message.clone(),
-                        attempts,
-                        max_attempts,
-                    },
-                });
-                round_outcome = Some(PotterRoundOutcome::TaskFailed {
-                    message: format!(
-                        "{} (stream recovery gave up after {attempts}/{max_attempts} retries)",
-                        err.message
-                    ),
-                });
-            }
-        }
 
-        should_forward = false;
+            should_forward = false;
+        }
+    }
+
+    if matches!(event.msg, EventMsg::TurnAborted(_)) {
+        recovery.pending_continue_retry = None;
+    }
+
+    if matches!(event.msg, EventMsg::TurnComplete(_))
+        && let Some(plan) = recovery.pending_continue_retry.take()
+    {
+        let tx = recovery.recovery_action_tx.clone();
+        let action = RecoveryAction::RetryContinue {
+            attempt: plan.attempt,
+        };
+        if plan.backoff.is_zero() {
+            let _ = tx.send(action);
+        } else {
+            tokio::spawn(async move {
+                tokio::time::sleep(plan.backoff).await;
+                let _ = tx.send(action);
+            });
+        }
     }
 
     if should_suppress_turn_complete {
@@ -933,10 +934,10 @@ mod stream_recovery_tests {
         let mut recovery = StreamRecoveryContext {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
+            pending_continue_retry: None,
             has_sent_turn_start: true,
             has_finished_round: false,
             last_turn_start_was_recovery_continue: false,
-            recovery_continue_turn_starts_since_activity: 0,
         };
 
         handle_codex_event(
@@ -968,9 +969,10 @@ mod stream_recovery_tests {
             event_rx.try_recv().is_err(),
             "expected retryable Error to be suppressed"
         );
-        assert_eq!(
-            action_rx.try_recv().expect("expected RetryContinue action"),
-            RecoveryAction::RetryContinue { attempt: 1 }
+
+        assert!(
+            action_rx.try_recv().is_err(),
+            "expected no immediate retry action"
         );
 
         handle_codex_event(
@@ -987,6 +989,10 @@ mod stream_recovery_tests {
         assert!(
             event_rx.try_recv().is_err(),
             "expected empty TurnComplete to be suppressed during retry streak"
+        );
+        assert_eq!(
+            action_rx.try_recv().expect("expected RetryContinue action"),
+            RecoveryAction::RetryContinue { attempt: 1 }
         );
 
         handle_codex_event(
@@ -1019,10 +1025,10 @@ mod stream_recovery_tests {
         let mut recovery = StreamRecoveryContext {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
+            pending_continue_retry: None,
             has_sent_turn_start: false,
             has_finished_round: false,
             last_turn_start_was_recovery_continue: false,
-            recovery_continue_turn_starts_since_activity: 0,
         };
 
         handle_codex_event(
@@ -1054,10 +1060,10 @@ mod stream_recovery_tests {
         let mut recovery = StreamRecoveryContext {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
+            pending_continue_retry: None,
             has_sent_turn_start: true,
             has_finished_round: false,
             last_turn_start_was_recovery_continue: false,
-            recovery_continue_turn_starts_since_activity: 0,
         };
 
         let err = retryable_error_event();
@@ -1108,16 +1114,16 @@ mod stream_recovery_tests {
     }
 
     #[test]
-    fn thread_rollback_failed_error_is_suppressed() {
+    fn thread_rollback_failed_error_is_forwarded_and_ends_round() {
         let (event_tx, mut event_rx) = unbounded_channel::<Event>();
         let (action_tx, mut action_rx) = unbounded_channel::<RecoveryAction>();
         let mut recovery = StreamRecoveryContext {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
+            pending_continue_retry: None,
             has_sent_turn_start: true,
             has_finished_round: false,
             last_turn_start_was_recovery_continue: false,
-            recovery_continue_turn_starts_since_activity: 0,
         };
 
         handle_codex_event(
@@ -1132,15 +1138,21 @@ mod stream_recovery_tests {
             &event_tx,
         );
 
-        assert!(
-            event_rx.try_recv().is_err(),
-            "expected ThreadRollbackFailed to be suppressed"
-        );
+        let forwarded = event_rx.try_recv().expect("expected forwarded error");
+        assert!(matches!(forwarded.msg, EventMsg::Error(_)));
+
+        let round_finished = event_rx.try_recv().expect("expected round finished marker");
+        assert!(matches!(
+            round_finished.msg,
+            EventMsg::PotterRoundFinished {
+                outcome: PotterRoundOutcome::Fatal { .. }
+            }
+        ));
         assert!(
             action_rx.try_recv().is_err(),
             "expected no recovery action from ThreadRollbackFailed"
         );
-        assert!(!recovery.has_finished_round, "round should continue");
+        assert!(recovery.has_finished_round, "round should end as fatal");
     }
 
     #[test]
@@ -1150,10 +1162,10 @@ mod stream_recovery_tests {
         let mut recovery = StreamRecoveryContext {
             stream_recovery: PotterStreamRecovery::new(),
             recovery_action_tx: action_tx,
+            pending_continue_retry: None,
             has_sent_turn_start: true,
             has_finished_round: false,
             last_turn_start_was_recovery_continue: false,
-            recovery_continue_turn_starts_since_activity: 0,
         };
 
         handle_codex_event(
