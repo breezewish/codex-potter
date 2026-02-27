@@ -75,6 +75,12 @@ fn render_render_only_viewport(
     bottom_pane.render(pane_area, buf);
 }
 
+/// Placeholder text shown in the bottom-pane composer.
+///
+/// # Divergence (codex-potter)
+///
+/// Upstream Codex uses `Ask Codex to do anything`; CodexPotter uses `Assign new task to
+/// CodexPotter`.
 const PROMPT_PLACEHOLDER_TEXT: &str = "Assign new task to CodexPotter";
 
 fn new_default_bottom_pane(
