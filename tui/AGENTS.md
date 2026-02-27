@@ -51,7 +51,7 @@ Behavior related
 
 - A customized banner on startup
 - Additionally shows gitignore startup hint
-- Auto retry on errors.
+- Auto retry on errors (successful recoveries are transient-only; unrecoverable errors are surfaced).
 - Customized update notification / self-update (and on-disk state under `~/.codexpotter/`).
 - No desktop notifications when the terminal is unfocused.
 

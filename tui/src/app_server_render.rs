@@ -1423,10 +1423,7 @@ impl RenderAppState {
                 return Ok(());
             }
             EventMsg::PotterStreamRecoveryRecovered => {
-                if let Some(cell) = self.potter_stream_recovery_retry_cell.take() {
-                    self.app_event_tx
-                        .send(AppEvent::InsertHistoryCell(Box::new(cell)));
-                }
+                self.potter_stream_recovery_retry_cell = None;
                 frame_requester.schedule_frame();
                 return Ok(());
             }
@@ -1799,7 +1796,7 @@ mod tests {
     }
 
     #[test]
-    fn potter_stream_recovery_retry_block_persists_and_archives_on_recovered_event() {
+    fn potter_stream_recovery_retry_block_persists_and_clears_on_recovered_event() {
         let width: u16 = 80;
 
         let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
@@ -1909,15 +1906,13 @@ mod tests {
         let transient_blob = lines_to_plain_strings(&transient_lines).join("\n");
         assert!(
             !transient_blob.contains("CodexPotter: retry"),
-            "expected retry block to be archived: {transient_blob:?}"
+            "expected retry block to be cleared: {transient_blob:?}"
         );
 
         let cells = drain_history_cell_strings(&mut rx_app, width);
-        pretty_assertions::assert_eq!(cells.len(), 1);
-        let blob = cells[0].join("\n");
         assert!(
-            blob.contains("• CodexPotter: retry 1/10"),
-            "unexpected archived retry cell: {blob:?}"
+            cells.is_empty(),
+            "expected no history cells; got: {cells:?}"
         );
     }
 

@@ -152,6 +152,9 @@ pub enum EventMsg {
     },
 
     /// `codex-potter` stream recovery finished successfully (activity observed).
+    ///
+    /// This event exists to let the UI clear any transient retry indicators. Successful recoveries
+    /// should not be surfaced as persistent transcript items.
     PotterStreamRecoveryRecovered,
 
     /// `codex-potter` stream recovery gave up after exhausting retries.
