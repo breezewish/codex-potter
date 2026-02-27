@@ -6,7 +6,6 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
@@ -38,6 +37,8 @@ use crate::external_editor_integration;
 use crate::file_search::FileSearchManager;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
+use crate::history_cell_potter::PotterStreamRecoveryRetryCell;
+use crate::history_cell_potter::PotterStreamRecoveryUnrecoverableCell;
 use crate::render::renderable::Renderable;
 use crate::streaming::controller::StreamController;
 use crate::tui::Tui;
@@ -933,7 +934,7 @@ struct RenderAppState {
     queued_user_messages: VecDeque<String>,
     reasoning_status: ReasoningStatusTracker,
     stream_error_status_header: Option<String>,
-    potter_stream_recovery_status_header: Option<String>,
+    potter_stream_recovery_retry_cell: Option<PotterStreamRecoveryRetryCell>,
     commit_anim_running: Arc<AtomicBool>,
     has_emitted_history_lines: bool,
     exit_after_next_draw: bool,
@@ -960,7 +961,7 @@ impl RenderAppState {
             queued_user_messages,
             reasoning_status: ReasoningStatusTracker::new(),
             stream_error_status_header: None,
-            potter_stream_recovery_status_header: None,
+            potter_stream_recovery_retry_cell: None,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             has_emitted_history_lines: false,
             exit_after_next_draw: false,
@@ -979,6 +980,11 @@ impl RenderAppState {
         if let Some(cell) = self.processor.pending_exploring_cell.as_ref() {
             // Keep a blank line between the transcript (which may include a background-colored
             // user prompt cell) and the live explored block.
+            transient_lines.push(Line::from(""));
+            transient_lines.extend(cell.display_lines(width));
+        }
+
+        if let Some(cell) = self.potter_stream_recovery_retry_cell.as_ref() {
             transient_lines.push(Line::from(""));
             transient_lines.extend(cell.display_lines(width));
         }
@@ -1356,48 +1362,45 @@ impl RenderAppState {
                 max_attempts,
                 error_message,
             } => {
-                if self.potter_stream_recovery_status_header.is_none() {
-                    self.potter_stream_recovery_status_header =
-                        Some(self.bottom_pane.status_header().to_string());
-                }
-
-                self.bottom_pane.update_status_header_with_details(
-                    format!("Reconnecting... {attempt}/{max_attempts}"),
-                    Some(error_message.clone()),
-                );
+                self.potter_stream_recovery_retry_cell = Some(PotterStreamRecoveryRetryCell {
+                    attempt: *attempt,
+                    max_attempts: *max_attempts,
+                    error_message: error_message.clone(),
+                });
 
                 self.processor.current_elapsed_secs = self
                     .bottom_pane
                     .status_widget()
                     .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
                 self.processor.handle_retryable_stream_error();
+                frame_requester.schedule_frame();
                 return Ok(());
             }
             EventMsg::PotterStreamRecoveryRecovered => {
-                if let Some(header) = self.potter_stream_recovery_status_header.take() {
-                    self.bottom_pane.update_status_header(header);
+                if let Some(cell) = self.potter_stream_recovery_retry_cell.take() {
+                    self.app_event_tx
+                        .send(AppEvent::InsertHistoryCell(Box::new(cell)));
                 }
+                frame_requester.schedule_frame();
                 return Ok(());
             }
             EventMsg::PotterStreamRecoveryGaveUp {
                 error_message,
-                max_attempts: _,
+                max_attempts,
                 ..
             } => {
-                if let Some(header) = self.potter_stream_recovery_status_header.take() {
-                    self.bottom_pane.update_status_header(header);
-                }
+                self.potter_stream_recovery_retry_cell = None;
                 self.processor.current_elapsed_secs = self
                     .bottom_pane
                     .status_widget()
                     .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
-                self.processor.handle_codex_event(Event {
-                    id: event.id.clone(),
-                    msg: EventMsg::Error(ErrorEvent {
-                        message: error_message.clone(),
-                        codex_error_info: None,
-                    }),
-                });
+                self.processor.handle_retryable_stream_error();
+                self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    PotterStreamRecoveryUnrecoverableCell {
+                        max_attempts: *max_attempts,
+                        error_message: error_message.clone(),
+                    },
+                )));
 
                 frame_requester.schedule_frame();
                 return Ok(());
@@ -1427,10 +1430,8 @@ impl RenderAppState {
             }
             EventMsg::TurnStarted(_) => {
                 self.reasoning_status.reset();
-                if self.potter_stream_recovery_status_header.is_none() {
-                    self.bottom_pane
-                        .update_status_header(String::from("Working"));
-                }
+                self.bottom_pane
+                    .update_status_header(String::from("Working"));
             }
             EventMsg::AgentReasoningDelta(ev) => {
                 if let Some(header) = self.reasoning_status.on_delta(&ev.delta) {
@@ -1745,7 +1746,7 @@ mod tests {
     }
 
     #[test]
-    fn potter_stream_recovery_status_persists_across_turn_start_and_restores_on_recovered_event() {
+    fn potter_stream_recovery_retry_block_persists_and_archives_on_recovered_event() {
         let width: u16 = 80;
 
         let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
@@ -1793,10 +1794,20 @@ mod tests {
         .expect("handle codex event");
 
         let status = app.bottom_pane.status_widget().expect("status indicator");
-        pretty_assertions::assert_eq!(status.header(), "Reconnecting... 1/10");
-        pretty_assertions::assert_eq!(
-            status.details(),
-            Some("Stream disconnected before completion: error sending request for url (...)")
+        pretty_assertions::assert_eq!(status.header(), "Inspecting for code duplication");
+        pretty_assertions::assert_eq!(status.details(), None);
+
+        let transient_lines = app.build_transient_lines(width);
+        let transient_blob = lines_to_plain_strings(&transient_lines).join("\n");
+        assert!(
+            transient_blob.contains("• CodexPotter: retry 1/10"),
+            "missing retry header: {transient_blob:?}"
+        );
+        assert!(
+            transient_blob.contains(
+                "└ Stream disconnected before completion: error sending request for url (...)"
+            ),
+            "missing retry error details: {transient_blob:?}"
         );
 
         let cells = drain_history_cell_strings(&mut rx_app, width);
@@ -1822,10 +1833,14 @@ mod tests {
         .expect("handle retry turn start");
 
         let status = app.bottom_pane.status_widget().expect("status indicator");
-        pretty_assertions::assert_eq!(status.header(), "Reconnecting... 1/10");
-        pretty_assertions::assert_eq!(
-            status.details(),
-            Some("Stream disconnected before completion: error sending request for url (...)")
+        pretty_assertions::assert_eq!(status.header(), "Working");
+        pretty_assertions::assert_eq!(status.details(), None);
+
+        let transient_lines = app.build_transient_lines(width);
+        let transient_blob = lines_to_plain_strings(&transient_lines).join("\n");
+        assert!(
+            transient_blob.contains("• CodexPotter: retry 1/10"),
+            "expected retry block to persist until recovered: {transient_blob:?}"
         );
 
         app.handle_codex_event(
@@ -1837,9 +1852,107 @@ mod tests {
         )
         .expect("handle recovered event");
 
-        let status = app.bottom_pane.status_widget().expect("status indicator");
-        pretty_assertions::assert_eq!(status.header(), "Inspecting for code duplication");
-        pretty_assertions::assert_eq!(status.details(), None);
+        let transient_lines = app.build_transient_lines(width);
+        let transient_blob = lines_to_plain_strings(&transient_lines).join("\n");
+        assert!(
+            !transient_blob.contains("CodexPotter: retry"),
+            "expected retry block to be archived: {transient_blob:?}"
+        );
+
+        let cells = drain_history_cell_strings(&mut rx_app, width);
+        pretty_assertions::assert_eq!(cells.len(), 1);
+        let blob = cells[0].join("\n");
+        assert!(
+            blob.contains("• CodexPotter: retry 1/10"),
+            "unexpected archived retry cell: {blob:?}"
+        );
+    }
+
+    #[test]
+    fn potter_stream_recovery_update_replaces_existing_retry_block_in_place() {
+        let width: u16 = 80;
+
+        let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
+        let app_event_tx = AppEventSender::new(tx_raw);
+
+        let processor = RenderOnlyProcessor::new(app_event_tx.clone());
+        let (op_tx, mut op_rx) = unbounded_channel::<Op>();
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: crate::tui::FrameRequester::test_dummy(),
+            enhanced_keys_supported: false,
+            app_event_tx: app_event_tx.clone(),
+            animations_enabled: false,
+            placeholder_text: "Assign new task to CodexPotter".to_string(),
+            disable_paste_burst: false,
+        });
+        bottom_pane.set_task_running(true);
+
+        let file_search = FileSearchManager::new(std::env::temp_dir(), app_event_tx.clone());
+        let mut app = RenderAppState::new(
+            processor,
+            app_event_tx,
+            op_tx,
+            bottom_pane,
+            crate::prompt_history_store::PromptHistoryStore::new(),
+            file_search,
+            VecDeque::new(),
+        );
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "err-1".into(),
+                msg: EventMsg::PotterStreamRecoveryUpdate {
+                    attempt: 1,
+                    max_attempts: 10,
+                    error_message:
+                        "stream disconnected before completion: error sending request for url (...)"
+                            .to_string(),
+                },
+            },
+        )
+        .expect("handle first update");
+
+        let transient_blob = lines_to_plain_strings(&app.build_transient_lines(width)).join("\n");
+        assert!(
+            transient_blob.contains("• CodexPotter: retry 1/10"),
+            "missing retry 1/10: {transient_blob:?}"
+        );
+
+        app.handle_codex_event(
+            crate::tui::FrameRequester::test_dummy(),
+            Event {
+                id: "err-3".into(),
+                msg: EventMsg::PotterStreamRecoveryUpdate {
+                    attempt: 3,
+                    max_attempts: 10,
+                    error_message:
+                        "stream disconnected before completion: error sending request for url (...)"
+                            .to_string(),
+                },
+            },
+        )
+        .expect("handle second update");
+
+        let transient_blob = lines_to_plain_strings(&app.build_transient_lines(width)).join("\n");
+        assert!(
+            transient_blob.contains("• CodexPotter: retry 3/10"),
+            "missing retry 3/10: {transient_blob:?}"
+        );
+        assert!(
+            !transient_blob.contains("• CodexPotter: retry 1/10"),
+            "expected retry block to update in place: {transient_blob:?}"
+        );
+
+        let cells = drain_history_cell_strings(&mut rx_app, width);
+        assert!(
+            cells.is_empty(),
+            "expected no history cells; got: {cells:?}"
+        );
+        assert!(
+            op_rx.try_recv().is_err(),
+            "expected no Continue op for stream recovery update"
+        );
     }
 
     #[test]
@@ -2003,7 +2116,8 @@ mod tests {
     }
 
     #[test]
-    fn stream_recovery_gave_up_inserts_error_cell_and_exits_on_round_finished_task_failed() {
+    fn stream_recovery_gave_up_inserts_unrecoverable_cell_and_exits_on_round_finished_task_failed()
+    {
         let width: u16 = 80;
 
         let (tx_raw, mut rx_app) = unbounded_channel::<AppEvent>();
@@ -2055,8 +2169,14 @@ mod tests {
         pretty_assertions::assert_eq!(cells.len(), 1);
         let blob = cells[0].join("\n");
         assert!(
-            blob.contains("■ stream disconnected before completion"),
-            "unexpected error cell: {blob:?}"
+            blob.contains("■ CodexPotter: unrecoverable error after 10 retries"),
+            "unexpected unrecoverable cell: {blob:?}"
+        );
+        assert!(
+            blob.contains(
+                "Stream disconnected before completion: error sending request for url (...)"
+            ),
+            "missing underlying error message: {blob:?}"
         );
 
         assert!(
@@ -2450,9 +2570,9 @@ mod tests {
         bottom_pane.set_task_running(true);
         bottom_pane.set_status_header_prefix(Some("Round 1/10".to_string()));
         bottom_pane.update_status_header_with_details(
-            "Reconnecting... 2/10".to_string(),
+            "Reconnecting... 1/5".to_string(),
             Some(
-                "stream disconnected before completion: error sending request for url (...)"
+                "stream disconnected before completion: error sending request for url (https://free.xxsxx.fun/v1/responses)"
                     .to_string(),
             ),
         );
@@ -2471,6 +2591,12 @@ mod tests {
             VecDeque::new(),
         );
         app.has_emitted_history_lines = true;
+        app.potter_stream_recovery_retry_cell =
+            Some(crate::history_cell_potter::PotterStreamRecoveryRetryCell {
+                attempt: 3,
+                max_attempts: 10,
+                error_message: "stream disconnected before completion: error sending request for url (https://free.xxsxx.fun/v1/responses)".to_string(),
+            });
 
         let transient_lines = app.build_transient_lines(width);
 

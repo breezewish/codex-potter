@@ -7,10 +7,14 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
+use unicode_width::UnicodeWidthStr;
 
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PrefixedWrappedHistoryCell;
+use crate::text_formatting::capitalize_first;
 use crate::ui_colors::secondary_color;
+use crate::wrapping::RtOptions;
+use crate::wrapping::word_wrap_lines;
 
 pub fn new_potter_round_started(current: u32, total: u32) -> PrefixedWrappedHistoryCell {
     let text: Text<'static> = Line::from(vec![
@@ -110,4 +114,87 @@ fn short_git_commit(commit: &str) -> String {
         return commit.to_string();
     }
     commit[..SHORT_SHA_LEN].to_string()
+}
+
+#[derive(Debug, Clone)]
+pub struct PotterStreamRecoveryRetryCell {
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub error_message: String,
+}
+
+impl HistoryCell for PotterStreamRecoveryRetryCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return Vec::new();
+        }
+
+        let potter_style = Style::default()
+            .fg(secondary_color())
+            .add_modifier(Modifier::BOLD);
+
+        let mut out = word_wrap_lines(
+            [Line::from(vec![
+                Span::styled("CodexPotter", potter_style),
+                ": ".into(),
+                format!("retry {}/{}", self.attempt, self.max_attempts).into(),
+            ])],
+            RtOptions::new(width.max(1) as usize)
+                .initial_indent(Line::from("• ".dim()))
+                .subsequent_indent(Line::from("  ")),
+        );
+
+        let error_message = capitalize_first(self.error_message.trim_start());
+
+        let prefix = "  └ ";
+        let prefix_width = UnicodeWidthStr::width(prefix);
+        out.extend(word_wrap_lines(
+            error_message.lines().map(|line| vec![line.dim()]),
+            RtOptions::new(width.max(1) as usize)
+                .initial_indent(Line::from(prefix.dim()))
+                .subsequent_indent(Line::from(Span::from(" ".repeat(prefix_width)).dim()))
+                .break_words(true),
+        ));
+
+        out
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PotterStreamRecoveryUnrecoverableCell {
+    pub max_attempts: u32,
+    pub error_message: String,
+}
+
+impl HistoryCell for PotterStreamRecoveryUnrecoverableCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return Vec::new();
+        }
+
+        let potter_style = Style::default()
+            .fg(secondary_color())
+            .add_modifier(Modifier::BOLD);
+
+        let mut out = word_wrap_lines(
+            [Line::from(vec![
+                "■ ".red(),
+                Span::styled("CodexPotter", potter_style),
+                ": ".red(),
+                format!("unrecoverable error after {} retries", self.max_attempts).red(),
+            ])],
+            RtOptions::new(width.max(1) as usize).break_words(true),
+        );
+
+        let error_message = capitalize_first(self.error_message.trim_start());
+        out.extend(word_wrap_lines(
+            error_message.lines().map(|line| vec![line.red()]),
+            RtOptions::new(width.max(1) as usize)
+                .initial_indent(Line::from("  ".red()))
+                .subsequent_indent(Line::from("  ".red()))
+                .break_words(true),
+        ));
+
+        out
+    }
 }
