@@ -59,7 +59,14 @@ impl StreamController {
         // Cleanup
         self.state.clear();
         self.finishing_after_drain = false;
-        self.emit(out_lines)
+        let cell = self.emit(out_lines);
+
+        // `finalize` ends the current "answer stream". Reset state so a subsequent stream starts a
+        // fresh transcript bullet (matching upstream behavior where the stream controller is
+        // dropped and recreated at tool boundaries).
+        self.header_emitted = false;
+
+        cell
     }
 
     /// Step animation: commit at most one queued line and handle end-of-drain cleanup.

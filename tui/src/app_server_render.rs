@@ -821,6 +821,13 @@ impl RenderOnlyProcessor {
                 )));
             }
             EventMsg::ExecCommandEnd(ev) => {
+                // Align with upstream Codex TUI behavior: flush any newline-gated agent output
+                // before rendering the tool result, so transcript ordering matches the semantic
+                // "agent explains -> tool runs -> agent continues" flow.
+                if let Some(cell) = self.stream.finalize() {
+                    self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+                }
+
                 let aggregated_output = if !ev.aggregated_output.is_empty() {
                     ev.aggregated_output
                 } else {
@@ -3039,6 +3046,95 @@ mod tests {
 
         assert_snapshot!(
             "render_only_worked_for_separator_vt100",
+            terminal.backend().vt100().screen().contents()
+        );
+    }
+
+    #[tokio::test]
+    async fn render_only_flushes_agent_stream_before_ran_vt100() {
+        let width: u16 = 80;
+        let height: u16 = 16;
+        let backend = VT100Backend::new(width, height);
+        let mut terminal =
+            crate::custom_terminal::Terminal::with_options(backend).expect("create terminal");
+        terminal.set_viewport_area(Rect::new(0, height - 1, width, 1));
+
+        let (mut proc, mut rx) = make_render_only_processor("test prompt");
+        let mut has_emitted_history_lines = false;
+        drain_render_history_events(
+            &mut rx,
+            &mut terminal,
+            width,
+            &mut has_emitted_history_lines,
+        );
+
+        proc.handle_codex_event(Event {
+            id: "delta-1".into(),
+            msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+                delta: "first message.".into(),
+            }),
+        });
+        drain_render_history_events(
+            &mut rx,
+            &mut terminal,
+            width,
+            &mut has_emitted_history_lines,
+        );
+
+        proc.handle_codex_event(Event {
+            id: "exec-end".into(),
+            msg: EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "exec-1".into(),
+                process_id: None,
+                turn_id: "turn-1".into(),
+                command: vec!["bash".into(), "-lc".into(), "echo tool".into()],
+                cwd: PathBuf::from("project"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::Agent,
+                interaction_input: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                aggregated_output: String::new(),
+                exit_code: 0,
+                duration: Duration::from_millis(1200),
+                formatted_output: String::new(),
+            }),
+        });
+        drain_render_history_events(
+            &mut rx,
+            &mut terminal,
+            width,
+            &mut has_emitted_history_lines,
+        );
+
+        proc.handle_codex_event(Event {
+            id: "delta-2".into(),
+            msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+                delta: "second message.".into(),
+            }),
+        });
+        drain_render_history_events(
+            &mut rx,
+            &mut terminal,
+            width,
+            &mut has_emitted_history_lines,
+        );
+
+        proc.handle_codex_event(Event {
+            id: "turn-complete".into(),
+            msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                last_agent_message: None,
+            }),
+        });
+        drain_render_history_events(
+            &mut rx,
+            &mut terminal,
+            width,
+            &mut has_emitted_history_lines,
+        );
+
+        assert_snapshot!(
+            "render_only_flushes_agent_stream_before_ran_vt100",
             terminal.backend().vt100().screen().contents()
         );
     }
