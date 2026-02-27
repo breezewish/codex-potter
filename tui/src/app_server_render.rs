@@ -92,6 +92,11 @@ fn new_default_bottom_pane(
     })
 }
 
+/// Prompt the user for a new task using the bottom-pane composer.
+///
+/// Returns `Ok(Some(prompt))` when the user submits a prompt. Returns `Ok(None)` when the prompt
+/// is cancelled (for example, <kbd>Ctrl</kbd>+<kbd>C</kbd> on an empty composer) or when the event
+/// stream ends unexpectedly.
 pub async fn prompt_user_with_tui(
     tui: &mut Tui,
     show_startup_banner: bool,
@@ -398,6 +403,7 @@ fn draw_prompt_bottom_pane(
     Ok(())
 }
 
+/// Controls how a single render-only turn is rendered into the terminal transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RenderOnlyTurnOptions {
     /// When true, renders the user prompt into the transcript before sending it to the backend.
@@ -418,9 +424,13 @@ impl Default for RenderOnlyTurnOptions {
     }
 }
 
+/// Channels required to drive a single render-only turn.
 pub struct RenderOnlyBackendChannels {
+    /// Sends ops from the UI to the backend.
     pub codex_op_tx: UnboundedSender<Op>,
+    /// Receives events streamed from the backend.
     pub codex_event_rx: UnboundedReceiver<Event>,
+    /// Receives fatal errors from the control plane that should abort the turn immediately.
     pub fatal_exit_rx: UnboundedReceiver<String>,
 }
 
@@ -434,6 +444,12 @@ fn text_user_input_op(text: String) -> Op {
     }
 }
 
+/// Run a single turn in render-only mode and collect any queued user messages typed mid-turn.
+///
+/// This function consumes backend events, updates the transcript, and drives the bottom composer.
+/// Any prompts queued while the turn is running are appended to `queued_user_messages`. The
+/// current composer draft is written back to `composer_draft` so it can be restored by subsequent
+/// prompt screens.
 pub async fn run_render_only_with_tui_options_and_queue(
     tui: &mut Tui,
     prompt: String,

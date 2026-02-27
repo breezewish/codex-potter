@@ -71,10 +71,15 @@ impl IndentContext {
     }
 }
 
+/// Render a Markdown string into `ratatui::text::Text` using the CodexPotter TUI styles.
+///
+/// This is the primary entry point used for rendering transcript content (user/assistant messages,
+/// tool output, etc.) in the TUI.
 pub fn render_markdown_text(input: &str) -> Text<'static> {
     render_markdown_text_with_width(input, None)
 }
 
+/// Like [`render_markdown_text`], but allows specifying an optional wrapping width in columns.
 pub fn render_markdown_text_with_width(input: &str, width: Option<usize>) -> Text<'static> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
