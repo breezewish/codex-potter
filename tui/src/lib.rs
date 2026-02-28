@@ -3,6 +3,7 @@
 
 mod exit;
 
+mod action_picker_prompt;
 mod ansi_escape;
 mod app_event;
 mod app_event_sender;

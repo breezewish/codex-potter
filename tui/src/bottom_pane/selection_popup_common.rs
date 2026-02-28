@@ -7,11 +7,15 @@ use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::widgets::Block;
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
 use crate::key_hint::KeyBinding;
+use crate::render::Insets;
+use crate::render::RectExt as _;
+use crate::style::user_message_style;
 
 use super::scroll_state::ScrollState;
 
@@ -25,6 +29,47 @@ pub struct GenericDisplayRow {
     pub disabled_reason: Option<String>,   // optional disabled message
     pub is_disabled: bool,
     pub wrap_indent: Option<usize>, // optional indent for wrapped lines
+}
+
+const MENU_SURFACE_INSET_V: u16 = 1;
+const MENU_SURFACE_INSET_H: u16 = 2;
+
+/// Apply the shared "menu surface" padding used by bottom-pane overlays.
+///
+/// Rendering code should generally call [`render_menu_surface`] and then lay
+/// out content inside the returned inset rect.
+pub fn menu_surface_inset(area: Rect) -> Rect {
+    area.inset(Insets::vh(MENU_SURFACE_INSET_V, MENU_SURFACE_INSET_H))
+}
+
+/// Total vertical padding introduced by the menu surface treatment.
+#[allow(dead_code)]
+pub const fn menu_surface_padding_height() -> u16 {
+    MENU_SURFACE_INSET_V * 2
+}
+
+/// Paint the shared menu background and return the inset content area.
+///
+/// This keeps the surface treatment consistent across selection-style overlays.
+pub fn render_menu_surface(area: Rect, buf: &mut Buffer) -> Rect {
+    if area.is_empty() {
+        return area;
+    }
+    Block::default()
+        .style(user_message_style())
+        .render(area, buf);
+    menu_surface_inset(area)
+}
+
+pub fn wrap_styled_line<'a>(line: &'a Line<'a>, width: u16) -> Vec<Line<'a>> {
+    use crate::wrapping::RtOptions;
+    use crate::wrapping::word_wrap_line;
+
+    let width = width.max(1) as usize;
+    let opts = RtOptions::new(width)
+        .initial_indent(Line::from(""))
+        .subsequent_indent(Line::from(""));
+    word_wrap_line(line, opts)
 }
 
 /// Compute a shared description-column start based on the widest visible name
@@ -240,6 +285,58 @@ pub fn render_rows(
             cur_y = cur_y.saturating_add(1);
         }
     }
+}
+
+/// Compute the number of terminal rows required to render up to `max_results`
+/// items from `rows_all` given the current scroll/selection state and the
+/// available `width`. Accounts for description wrapping and alignment so the
+/// caller can allocate sufficient vertical space.
+pub fn measure_rows_height(
+    rows_all: &[GenericDisplayRow],
+    state: &ScrollState,
+    max_results: usize,
+    width: u16,
+) -> u16 {
+    if rows_all.is_empty() {
+        return 1; // placeholder "no matches" line
+    }
+
+    let content_width = width.saturating_sub(1).max(1);
+
+    let visible_items = max_results.min(rows_all.len());
+    let mut start_idx = state.scroll_top.min(rows_all.len().saturating_sub(1));
+    if let Some(sel) = state.selected_idx {
+        if sel < start_idx {
+            start_idx = sel;
+        } else if visible_items > 0 {
+            let bottom = start_idx + visible_items - 1;
+            if sel > bottom {
+                start_idx = sel + 1 - visible_items;
+            }
+        }
+    }
+
+    let desc_col = compute_desc_col(rows_all, start_idx, visible_items, content_width);
+
+    use crate::wrapping::RtOptions;
+    use crate::wrapping::word_wrap_line;
+    let mut total: u16 = 0;
+    for row in rows_all
+        .iter()
+        .enumerate()
+        .skip(start_idx)
+        .take(visible_items)
+        .map(|(_, r)| r)
+    {
+        let full_line = build_full_line(row, desc_col);
+        let continuation_indent = wrap_indent(row, desc_col, content_width);
+        let opts = RtOptions::new(content_width as usize)
+            .initial_indent(Line::from(""))
+            .subsequent_indent(Line::from(" ".repeat(continuation_indent)));
+        let wrapped_lines = word_wrap_line(&full_line, opts).len();
+        total = total.saturating_add(wrapped_lines as u16);
+    }
+    total.max(1)
 }
 
 fn line_width(line: &Line<'_>) -> usize {

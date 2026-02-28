@@ -1,0 +1,10 @@
+---
+source: tui/src/bottom_pane/list_selection_view.rs
+expression: terminal.backend()
+---
+"                                                      "
+"  Select Action                                       "
+"                                                      "
+"› 1. Iterate 10 more rounds                           "
+"                                                      "
+"  Press enter to run, or esc to exit.                 "

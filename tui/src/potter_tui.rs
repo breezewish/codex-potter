@@ -105,6 +105,25 @@ impl CodexPotterTui {
         .await
     }
 
+    /// Prompt the user to select an action from a list.
+    ///
+    /// Returns:
+    /// - `Ok(Some(index))`: selected the action at `index`
+    /// - `Ok(None)`: cancelled (Esc/Ctrl+C)
+    pub async fn prompt_action_picker(
+        &mut self,
+        actions: Vec<String>,
+    ) -> anyhow::Result<Option<usize>> {
+        let result =
+            crate::action_picker_prompt::prompt_action_picker(&mut self.tui, actions).await;
+
+        self.tui.pause_events();
+        tui::flush_terminal_input_buffer();
+        self.tui.resume_events();
+
+        result
+    }
+
     /// Clear current screen contents (used to remove composer remnants).
     pub fn clear(&mut self) -> anyhow::Result<()> {
         self.tui.terminal.clear()?;

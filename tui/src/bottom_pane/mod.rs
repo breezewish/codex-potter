@@ -4,11 +4,15 @@
 //! `codex-potter` we only need the legacy composer UX (textarea, file search, paste burst handling)
 //! both for capturing the initial prompt and for queuing follow-up prompts while a turn is
 //! running.
+//!
+//! This crate also includes a small subset of upstream selection-style views for CodexPotter's
+//! resume action picker.
 
 mod chat_composer;
 mod chat_composer_history;
 mod file_search_popup;
 mod footer;
+mod list_selection_view;
 mod paste_burst;
 pub mod popup_consts;
 mod queued_user_messages;
@@ -21,6 +25,9 @@ mod word_boundary;
 pub use chat_composer::ChatComposer;
 pub use chat_composer::ChatComposerDraft;
 pub use chat_composer::InputResult;
+pub use list_selection_view::ListSelectionView;
+pub use list_selection_view::SelectionItem;
+pub use list_selection_view::SelectionViewParams;
 pub use queued_user_messages::QueuedUserMessages;
 
 use ratatui::buffer::Buffer;
