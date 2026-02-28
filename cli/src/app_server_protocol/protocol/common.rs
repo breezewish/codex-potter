@@ -24,6 +24,13 @@ pub enum ClientRequest {
         params: v2::ThreadStartParams,
     },
 
+    #[serde(rename = "thread/resume")]
+    ThreadResume {
+        #[serde(rename = "id")]
+        request_id: RequestId,
+        params: v2::ThreadResumeParams,
+    },
+
     #[serde(rename = "thread/rollback")]
     ThreadRollback {
         #[serde(rename = "id")]
@@ -92,6 +99,7 @@ impl TryFrom<JSONRPCRequest> for ServerRequest {
 #[cfg(test)]
 mod tests {
     use super::v1::ClientInfo;
+    use super::v2::ThreadResumeParams;
     use super::v2::ThreadRollbackParams;
     use super::v2::ThreadStartParams;
     use super::v2::TurnStartParams;
@@ -150,9 +158,51 @@ mod tests {
     }
 
     #[test]
+    fn serialize_thread_resume_includes_null_option_fields() {
+        let request = ClientRequest::ThreadResume {
+            request_id: RequestId::Integer(2),
+            params: ThreadResumeParams {
+                thread_id: "thread-1".to_string(),
+                model: None,
+                model_provider: None,
+                cwd: None,
+                approval_policy: Some(crate::app_server_protocol::AskForApproval::Never),
+                sandbox: None,
+                config: None,
+                base_instructions: None,
+                developer_instructions: None,
+            },
+        };
+
+        let value = serde_json::to_value(&request).expect("serialize request");
+        assert_eq!(value["method"], "thread/resume");
+        assert_eq!(value["id"], 2);
+
+        let params = value["params"].as_object().expect("params object");
+        for key in [
+            "threadId",
+            "model",
+            "modelProvider",
+            "cwd",
+            "approvalPolicy",
+            "sandbox",
+            "config",
+            "baseInstructions",
+            "developerInstructions",
+        ] {
+            assert!(
+                params.contains_key(key),
+                "thread/resume params must contain key {key}"
+            );
+        }
+        assert_eq!(value["params"]["threadId"], "thread-1");
+        assert_eq!(value["params"]["approvalPolicy"], "never");
+    }
+
+    #[test]
     fn serialize_turn_start_includes_output_schema_key() {
         let request = ClientRequest::TurnStart {
-            request_id: RequestId::Integer(2),
+            request_id: RequestId::Integer(3),
             params: TurnStartParams {
                 thread_id: "thread-1".to_string(),
                 input: Vec::new(),
@@ -169,7 +219,7 @@ mod tests {
 
         let value = serde_json::to_value(&request).expect("serialize request");
         assert_eq!(value["method"], "turn/start");
-        assert_eq!(value["id"], 2);
+        assert_eq!(value["id"], 3);
 
         let params = value["params"].as_object().expect("params object");
         for key in [
@@ -194,7 +244,7 @@ mod tests {
     #[test]
     fn serialize_thread_rollback_includes_num_turns() {
         let request = ClientRequest::ThreadRollback {
-            request_id: RequestId::Integer(3),
+            request_id: RequestId::Integer(4),
             params: ThreadRollbackParams {
                 thread_id: "thread-1".to_string(),
                 num_turns: 1,
@@ -203,7 +253,7 @@ mod tests {
 
         let value = serde_json::to_value(&request).expect("serialize request");
         assert_eq!(value["method"], "thread/rollback");
-        assert_eq!(value["id"], 3);
+        assert_eq!(value["id"], 4);
 
         let params = value["params"].as_object().expect("params object");
         for key in ["threadId", "numTurns"] {

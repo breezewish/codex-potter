@@ -110,6 +110,32 @@ pub struct ThreadStartResponse {
     pub reasoning_effort: Option<ReasoningEffort>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResumeParams {
+    pub thread_id: String,
+    pub model: Option<String>,
+    pub model_provider: Option<String>,
+    pub cwd: Option<String>,
+    pub approval_policy: Option<AskForApproval>,
+    pub sandbox: Option<SandboxMode>,
+    pub config: Option<HashMap<String, JsonValue>>,
+    pub base_instructions: Option<String>,
+    pub developer_instructions: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResumeResponse {
+    pub thread: Thread,
+    pub model: String,
+    pub model_provider: String,
+    pub cwd: PathBuf,
+    pub approval_policy: AskForApproval,
+    pub sandbox: SandboxPolicy,
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Thread {

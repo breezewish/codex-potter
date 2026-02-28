@@ -107,7 +107,10 @@ pub async fn run_resume(
     let potter_rollout_path = crate::potter_rollout::potter_rollout_path(&resolved.project_dir);
     let potter_rollout_lines = load_potter_rollout_lines(&potter_rollout_path)?;
 
-    let round_plans = build_round_replay_plans(&resolved, &potter_rollout_lines)?;
+    let ResumeReplayPlans {
+        completed_rounds: replay_rounds,
+        unfinished_round,
+    } = build_round_replay_plans(&resolved, &potter_rollout_lines)?;
 
     let (op_tx, mut op_rx) = unbounded_channel::<codex_protocol::protocol::Op>();
     tokio::spawn(async move { while op_rx.recv().await.is_some() {} });
@@ -115,7 +118,7 @@ pub async fn run_resume(
     ui.clear().context("clear TUI before resume replay")?;
 
     let mut user_cancelled_replay = false;
-    for (idx, plan) in round_plans.into_iter().enumerate() {
+    for (idx, plan) in replay_rounds.into_iter().enumerate() {
         let RoundReplayPlan { events, outcome } = plan;
         let (event_tx, event_rx) = unbounded_channel::<Event>();
         for msg in events {
@@ -155,18 +158,30 @@ pub async fn run_resume(
     }
 
     let iterate_rounds_usize = iterate_rounds.get();
-    let rounds_label = if iterate_rounds_usize == 1 {
-        "round"
-    } else {
-        "rounds"
+    let action = match &unfinished_round {
+        Some(unfinished) => {
+            let remaining_rounds = unfinished.remaining_rounds_including_current()?;
+            let rounds_label = if remaining_rounds == 1 {
+                "round"
+            } else {
+                "rounds"
+            };
+            format!(
+                "Continue & iterate {} more {}",
+                remaining_rounds, rounds_label
+            )
+        }
+        None => {
+            let rounds_label = if iterate_rounds_usize == 1 {
+                "round"
+            } else {
+                "rounds"
+            };
+            format!("Iterate {} more {}", iterate_rounds_usize, rounds_label)
+        }
     };
 
-    let selection = ui
-        .prompt_action_picker(vec![format!(
-            "Iterate {} more {}",
-            iterate_rounds_usize, rounds_label
-        )])
-        .await?;
+    let selection = ui.prompt_action_picker(vec![action]).await?;
     let Some(index) = selection else {
         return Ok(ResumeExit::Completed);
     };
@@ -205,31 +220,112 @@ pub async fn run_resume(
         project_started_at: Instant::now(),
     };
 
-    let iterate_rounds_u32 = u32::try_from(iterate_rounds_usize).unwrap_or(u32::MAX);
-    for offset in 0..iterate_rounds_usize {
-        let current_round = u32::try_from(offset.saturating_add(1)).unwrap_or(u32::MAX);
-        let session_succeeded_rounds = baseline_rounds_u32.saturating_add(current_round);
-        let round_result = crate::round_runner::run_potter_round(
-            ui,
-            &round_context,
-            crate::round_runner::PotterRoundOptions {
-                pad_before_first_cell: true,
-                session_started: None,
-                round_current: current_round,
-                round_total: iterate_rounds_u32,
-                session_succeeded_rounds,
-            },
-        )
-        .await?;
+    match unfinished_round {
+        Some(unfinished) => {
+            let remaining_rounds = unfinished.remaining_rounds_including_current()?;
+            let remaining_after_continue = remaining_rounds.saturating_sub(1);
 
-        match &round_result.exit_reason {
-            ExitReason::UserRequested => break,
-            ExitReason::TaskFailed(_) => break,
-            ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
-            ExitReason::Completed => {}
+            let mut replay_event_msgs = Vec::new();
+            if let Some((user_message, user_prompt_file)) = unfinished.session_started {
+                replay_event_msgs.push(EventMsg::PotterSessionStarted {
+                    user_message,
+                    working_dir: resolved.workdir.clone(),
+                    project_dir: resolved.project_dir.clone(),
+                    user_prompt_file,
+                });
+            }
+            if let Some(cfg) = synthesize_session_configured_event(
+                unfinished.thread_id,
+                unfinished.rollout_path.clone(),
+            )? {
+                replay_event_msgs.push(EventMsg::SessionConfigured(cfg));
+            }
+            let mut rollout_events = read_upstream_rollout_event_msgs(&unfinished.rollout_path)
+                .with_context(|| format!("replay rollout {}", unfinished.rollout_path.display()))?;
+            replay_event_msgs.append(&mut rollout_events);
+
+            let round_result = crate::round_runner::continue_potter_round(
+                ui,
+                &round_context,
+                crate::round_runner::PotterContinueRoundOptions {
+                    pad_before_first_cell: true,
+                    round_current: unfinished.round_current,
+                    round_total: unfinished.round_total,
+                    session_succeeded_rounds: baseline_rounds_u32.saturating_add(1),
+                    resume_thread_id: unfinished.thread_id,
+                    replay_event_msgs,
+                },
+            )
+            .await?;
+
+            match &round_result.exit_reason {
+                ExitReason::UserRequested => return Ok(ResumeExit::Completed),
+                ExitReason::TaskFailed(_) => return Ok(ResumeExit::Completed),
+                ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
+                ExitReason::Completed => {}
+            }
+            if round_result.stop_due_to_finite_incantatem {
+                return Ok(ResumeExit::Completed);
+            }
+
+            for offset in 0..remaining_after_continue {
+                let current_round = unfinished
+                    .round_current
+                    .saturating_add(u32::try_from(offset.saturating_add(1)).unwrap_or(u32::MAX));
+                let session_succeeded_rounds = baseline_rounds_u32
+                    .saturating_add(u32::try_from(offset.saturating_add(2)).unwrap_or(u32::MAX));
+                let round_result = crate::round_runner::run_potter_round(
+                    ui,
+                    &round_context,
+                    crate::round_runner::PotterRoundOptions {
+                        pad_before_first_cell: true,
+                        session_started: None,
+                        round_current: current_round,
+                        round_total: unfinished.round_total,
+                        session_succeeded_rounds,
+                    },
+                )
+                .await?;
+
+                match &round_result.exit_reason {
+                    ExitReason::UserRequested => break,
+                    ExitReason::TaskFailed(_) => break,
+                    ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
+                    ExitReason::Completed => {}
+                }
+                if round_result.stop_due_to_finite_incantatem {
+                    break;
+                }
+            }
         }
-        if round_result.stop_due_to_finite_incantatem {
-            break;
+        None => {
+            let iterate_rounds_u32 = u32::try_from(iterate_rounds_usize).unwrap_or(u32::MAX);
+            for offset in 0..iterate_rounds_usize {
+                let current_round = u32::try_from(offset.saturating_add(1)).unwrap_or(u32::MAX);
+                let session_succeeded_rounds = baseline_rounds_u32.saturating_add(current_round);
+                let round_result = crate::round_runner::run_potter_round(
+                    ui,
+                    &round_context,
+                    crate::round_runner::PotterRoundOptions {
+                        pad_before_first_cell: true,
+                        session_started: None,
+                        round_current: current_round,
+                        round_total: iterate_rounds_u32,
+                        session_succeeded_rounds,
+                    },
+                )
+                .await?;
+
+                match &round_result.exit_reason {
+                    ExitReason::UserRequested => break,
+                    ExitReason::TaskFailed(_) => break,
+                    ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
+                    ExitReason::Completed => {}
+                }
+                if round_result.stop_due_to_finite_incantatem {
+                    break;
+                }
+            }
         }
     }
 
@@ -337,9 +433,50 @@ fn derive_project_workdir(progress_file: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
+#[derive(Debug)]
 struct RoundReplayPlan {
     events: Vec<EventMsg>,
     outcome: PotterRoundOutcome,
+}
+
+#[derive(Debug)]
+struct ResumeReplayPlans {
+    completed_rounds: Vec<RoundReplayPlan>,
+    unfinished_round: Option<UnfinishedRoundPlan>,
+}
+
+#[derive(Debug)]
+struct UnfinishedRoundPlan {
+    round_current: u32,
+    round_total: u32,
+    thread_id: codex_protocol::ThreadId,
+    rollout_path: PathBuf,
+    session_started: Option<(Option<String>, PathBuf)>,
+}
+
+impl UnfinishedRoundPlan {
+    fn remaining_rounds_including_current(&self) -> anyhow::Result<usize> {
+        if self.round_current == 0 {
+            anyhow::bail!("potter-rollout: round_current must be >= 1");
+        }
+        if self.round_total == 0 {
+            anyhow::bail!("potter-rollout: round_total must be >= 1");
+        }
+        if self.round_current > self.round_total {
+            anyhow::bail!(
+                "potter-rollout: round_current {} exceeds round_total {}",
+                self.round_current,
+                self.round_total
+            );
+        }
+
+        Ok(usize::try_from(
+            self.round_total
+                .saturating_sub(self.round_current)
+                .saturating_add(1),
+        )
+        .unwrap_or(usize::MAX))
+    }
 }
 
 fn count_completed_rounds(lines: &[crate::potter_rollout::PotterRolloutLine]) -> usize {
@@ -357,7 +494,7 @@ fn count_completed_rounds(lines: &[crate::potter_rollout::PotterRolloutLine]) ->
 fn build_round_replay_plans(
     project: &ResolvedProjectPaths,
     potter_rollout_lines: &[crate::potter_rollout::PotterRolloutLine],
-) -> anyhow::Result<Vec<RoundReplayPlan>> {
+) -> anyhow::Result<ResumeReplayPlans> {
     let mut session_started: Option<(Option<String>, PathBuf)> = None;
     let mut rounds = Vec::new();
 
@@ -481,14 +618,34 @@ fn build_round_replay_plans(
         }
     }
 
-    if current.is_some() {
-        anyhow::bail!("potter-rollout: missing round_finished at EOF");
-    }
-    if session_started.is_some() && rounds.is_empty() {
+    let has_session_started = session_started.is_some();
+    let unfinished_round = match current.take() {
+        Some(builder) => {
+            if builder.session_succeeded.is_some() {
+                anyhow::bail!("potter-rollout: session_succeeded without round_finished at EOF");
+            }
+            let Some((thread_id, rollout_path)) = builder.configured else {
+                anyhow::bail!("potter-rollout: missing round_configured at EOF");
+            };
+            Some(UnfinishedRoundPlan {
+                round_current: builder.started.0,
+                round_total: builder.started.1,
+                thread_id,
+                rollout_path: resolve_rollout_path_for_replay(project, &rollout_path),
+                session_started,
+            })
+        }
+        None => None,
+    };
+
+    if has_session_started && rounds.is_empty() && unfinished_round.is_none() {
         anyhow::bail!("potter-rollout: session_started present but no rounds found");
     }
 
-    Ok(rounds)
+    Ok(ResumeReplayPlans {
+        completed_rounds: rounds,
+        unfinished_round,
+    })
 }
 
 fn resolve_rollout_path_for_replay(project: &ResolvedProjectPaths, rollout_path: &Path) -> PathBuf {
@@ -766,5 +923,129 @@ mod tests {
             "unexpected error: {message}"
         );
         assert!(message.contains("potter-rollout.jsonl"));
+    }
+
+    #[test]
+    fn build_round_replay_plans_returns_unfinished_round_at_eof() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _main = write_main(temp.path(), ".codexpotter/projects/2026/02/01/1");
+        let resolved =
+            resolve_project_paths(temp.path(), Path::new("2026/02/01/1")).expect("resolve");
+
+        let thread_id =
+            codex_protocol::ThreadId::from_string("019ca423-63d9-7641-ae83-db060ad3c000")
+                .expect("thread id");
+        let potter_rollout_lines = vec![
+            crate::potter_rollout::PotterRolloutLine::SessionStarted {
+                user_message: Some("hello".to_string()),
+                user_prompt_file: PathBuf::from(".codexpotter/projects/2026/02/01/1/MAIN.md"),
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundStarted {
+                current: 1,
+                total: 10,
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundConfigured {
+                thread_id,
+                rollout_path: PathBuf::from("rollout.jsonl"),
+                rollout_path_raw: None,
+                rollout_base_dir: None,
+            },
+        ];
+
+        let plans =
+            build_round_replay_plans(&resolved, &potter_rollout_lines).expect("build plans");
+        assert_eq!(plans.completed_rounds.len(), 0);
+
+        let unfinished = plans.unfinished_round.expect("unfinished round");
+        assert_eq!(unfinished.round_current, 1);
+        assert_eq!(unfinished.round_total, 10);
+        assert_eq!(unfinished.thread_id, thread_id);
+        assert_eq!(
+            unfinished.rollout_path,
+            resolved.workdir.join("rollout.jsonl")
+        );
+        assert_eq!(unfinished.remaining_rounds_including_current().unwrap(), 10);
+        assert_eq!(
+            unfinished.session_started,
+            Some((
+                Some("hello".to_string()),
+                PathBuf::from(".codexpotter/projects/2026/02/01/1/MAIN.md"),
+            ))
+        );
+    }
+
+    #[test]
+    fn build_round_replay_plans_consumes_session_started_in_first_completed_round() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _main = write_main(temp.path(), ".codexpotter/projects/2026/02/01/1");
+        let resolved =
+            resolve_project_paths(temp.path(), Path::new("2026/02/01/1")).expect("resolve");
+
+        std::fs::write(resolved.workdir.join("first.jsonl"), "").expect("write first rollout");
+
+        let thread_id =
+            codex_protocol::ThreadId::from_string("019ca423-63d9-7641-ae83-db060ad3c000")
+                .expect("thread id");
+        let next_thread_id =
+            codex_protocol::ThreadId::from_string("019ca42b-38d5-7be2-9d37-d223f40b8748")
+                .expect("next thread id");
+
+        let potter_rollout_lines = vec![
+            crate::potter_rollout::PotterRolloutLine::SessionStarted {
+                user_message: Some("hello".to_string()),
+                user_prompt_file: PathBuf::from(".codexpotter/projects/2026/02/01/1/MAIN.md"),
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundStarted {
+                current: 1,
+                total: 10,
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundConfigured {
+                thread_id,
+                rollout_path: PathBuf::from("first.jsonl"),
+                rollout_path_raw: None,
+                rollout_base_dir: None,
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundFinished {
+                outcome: PotterRoundOutcome::Completed,
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundStarted {
+                current: 2,
+                total: 10,
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundConfigured {
+                thread_id: next_thread_id,
+                rollout_path: PathBuf::from("second.jsonl"),
+                rollout_path_raw: None,
+                rollout_base_dir: None,
+            },
+        ];
+
+        let plans =
+            build_round_replay_plans(&resolved, &potter_rollout_lines).expect("build plans");
+        assert_eq!(plans.completed_rounds.len(), 1);
+
+        let unfinished = plans.unfinished_round.expect("unfinished round");
+        assert_eq!(unfinished.session_started, None);
+    }
+
+    #[test]
+    fn build_round_replay_plans_errors_when_unfinished_round_is_missing_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _main = write_main(temp.path(), ".codexpotter/projects/2026/02/01/1");
+        let resolved =
+            resolve_project_paths(temp.path(), Path::new("2026/02/01/1")).expect("resolve");
+
+        let potter_rollout_lines = vec![crate::potter_rollout::PotterRolloutLine::RoundStarted {
+            current: 1,
+            total: 10,
+        }];
+
+        let err =
+            build_round_replay_plans(&resolved, &potter_rollout_lines).expect_err("expected error");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("missing round_configured"),
+            "unexpected error: {message}"
+        );
     }
 }

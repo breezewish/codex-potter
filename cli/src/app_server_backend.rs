@@ -22,6 +22,8 @@ use crate::app_server_protocol::JSONRPCMessage;
 use crate::app_server_protocol::JSONRPCResponse;
 use crate::app_server_protocol::RequestId;
 use crate::app_server_protocol::ServerRequest;
+use crate::app_server_protocol::ThreadResumeParams;
+use crate::app_server_protocol::ThreadResumeResponse;
 use crate::app_server_protocol::ThreadRollbackParams;
 use crate::app_server_protocol::ThreadRollbackResponse;
 use crate::app_server_protocol::ThreadStartParams;
@@ -34,6 +36,7 @@ use crate::potter_stream_recovery::ContinueRetryPlan;
 use crate::potter_stream_recovery::PotterStreamRecovery;
 use anyhow::Context;
 use codex_protocol::ThreadId;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -102,6 +105,7 @@ pub struct AppServerBackendConfig {
     pub launch: AppServerLaunchConfig,
     pub codex_home: Option<PathBuf>,
     pub thread_cwd: Option<PathBuf>,
+    pub resume_thread_id: Option<ThreadId>,
 }
 
 pub async fn run_app_server_backend(
@@ -142,6 +146,7 @@ async fn run_app_server_backend_inner(
         launch,
         codex_home,
         thread_cwd,
+        resume_thread_id,
     } = config;
     let (mut child, stdin, stdout, stderr) =
         spawn_app_server(&codex_bin, launch, codex_home.as_deref()).await?;
@@ -208,24 +213,47 @@ async fn run_app_server_backend_inner(
         )
         .await?;
 
-        let thread_start = thread_start(
-            stdin
-                .as_mut()
-                .context("codex app-server stdin unavailable")?,
-            &mut lines,
-            &mut next_id,
-            ThreadStartSettings {
-                developer_instructions,
-                sandbox_mode: launch.thread_sandbox,
-                cwd: thread_cwd,
-            },
-            &mut recovery,
-            event_tx,
-        )
-        .await?;
-        let thread_id = thread_start.thread.id.clone();
+        let thread_start_or_resume = match resume_thread_id {
+            Some(thread_id) => ThreadStartOrResume::Resume(
+                thread_resume(
+                    stdin
+                        .as_mut()
+                        .context("codex app-server stdin unavailable")?,
+                    &mut lines,
+                    &mut next_id,
+                    ThreadResumeSettings {
+                        thread_id,
+                        developer_instructions,
+                        sandbox_mode: launch.thread_sandbox,
+                        cwd: thread_cwd,
+                    },
+                    &mut recovery,
+                    event_tx,
+                )
+                .await?,
+            ),
+            None => ThreadStartOrResume::Start(
+                thread_start(
+                    stdin
+                        .as_mut()
+                        .context("codex app-server stdin unavailable")?,
+                    &mut lines,
+                    &mut next_id,
+                    ThreadStartSettings {
+                        developer_instructions,
+                        sandbox_mode: launch.thread_sandbox,
+                        cwd: thread_cwd,
+                    },
+                    &mut recovery,
+                    event_tx,
+                )
+                .await?,
+            ),
+        };
 
-        let session_configured = synthesize_session_configured(&thread_start)?;
+        let thread_id = thread_start_or_resume.thread_id().to_string();
+
+        let session_configured = synthesize_session_configured(&thread_start_or_resume)?;
         let _ = event_tx.send(Event {
             id: "".to_string(),
             msg: EventMsg::SessionConfigured(session_configured),
@@ -463,6 +491,13 @@ struct ThreadStartSettings {
     cwd: Option<PathBuf>,
 }
 
+struct ThreadResumeSettings {
+    thread_id: ThreadId,
+    developer_instructions: Option<String>,
+    sandbox_mode: Option<crate::app_server_protocol::SandboxMode>,
+    cwd: Option<PathBuf>,
+}
+
 async fn thread_start(
     stdin: &mut ChildStdin,
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
@@ -494,6 +529,41 @@ async fn thread_start(
     send_message(stdin, &request).await?;
     let response = read_until_response(stdin, lines, request_id, recovery, event_tx).await?;
     serde_json::from_value(response.result).context("decode thread/start response")
+}
+
+async fn thread_resume(
+    stdin: &mut ChildStdin,
+    lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
+    next_id: &mut i64,
+    settings: ThreadResumeSettings,
+    recovery: &mut StreamRecoveryContext,
+    event_tx: &UnboundedSender<Event>,
+) -> anyhow::Result<ThreadResumeResponse> {
+    let ThreadResumeSettings {
+        thread_id,
+        developer_instructions,
+        sandbox_mode,
+        cwd,
+    } = settings;
+
+    let request_id = next_request_id(next_id);
+    let request = ClientRequest::ThreadResume {
+        request_id: request_id.clone(),
+        params: ThreadResumeParams {
+            thread_id: thread_id.to_string(),
+            model: None,
+            model_provider: None,
+            cwd: cwd.map(|cwd| cwd.to_string_lossy().to_string()),
+            approval_policy: Some(crate::app_server_protocol::AskForApproval::Never),
+            sandbox: sandbox_mode,
+            config: None,
+            base_instructions: None,
+            developer_instructions,
+        },
+    };
+    send_message(stdin, &request).await?;
+    let response = read_until_response(stdin, lines, request_id, recovery, event_tx).await?;
+    serde_json::from_value(response.result).context("decode thread/resume response")
 }
 
 async fn thread_rollback(
@@ -894,23 +964,72 @@ async fn read_until_response_or_error(
 }
 
 fn synthesize_session_configured(
-    thread_start: &ThreadStartResponse,
+    thread_start_or_resume: &ThreadStartOrResume,
 ) -> anyhow::Result<SessionConfiguredEvent> {
     let thread_id =
-        ThreadId::from_string(thread_start.thread.id.as_str()).context("parse thread id")?;
+        ThreadId::from_string(thread_start_or_resume.thread_id()).context("parse thread id")?;
 
     Ok(SessionConfiguredEvent {
         session_id: thread_id,
         forked_from_id: None,
-        model: thread_start.model.clone(),
-        model_provider_id: thread_start.model_provider.clone(),
-        cwd: thread_start.cwd.clone(),
-        reasoning_effort: thread_start.reasoning_effort,
+        model: thread_start_or_resume.model().to_string(),
+        model_provider_id: thread_start_or_resume.model_provider().to_string(),
+        cwd: thread_start_or_resume.cwd().to_path_buf(),
+        reasoning_effort: thread_start_or_resume.reasoning_effort(),
         history_log_id: 0,
         history_entry_count: 0,
         initial_messages: None,
-        rollout_path: thread_start.thread.path.clone(),
+        rollout_path: thread_start_or_resume.rollout_path().to_path_buf(),
     })
+}
+
+enum ThreadStartOrResume {
+    Start(ThreadStartResponse),
+    Resume(ThreadResumeResponse),
+}
+
+impl ThreadStartOrResume {
+    fn thread_id(&self) -> &str {
+        match self {
+            ThreadStartOrResume::Start(resp) => &resp.thread.id,
+            ThreadStartOrResume::Resume(resp) => &resp.thread.id,
+        }
+    }
+
+    fn model(&self) -> &str {
+        match self {
+            ThreadStartOrResume::Start(resp) => &resp.model,
+            ThreadStartOrResume::Resume(resp) => &resp.model,
+        }
+    }
+
+    fn model_provider(&self) -> &str {
+        match self {
+            ThreadStartOrResume::Start(resp) => &resp.model_provider,
+            ThreadStartOrResume::Resume(resp) => &resp.model_provider,
+        }
+    }
+
+    fn cwd(&self) -> &Path {
+        match self {
+            ThreadStartOrResume::Start(resp) => resp.cwd.as_path(),
+            ThreadStartOrResume::Resume(resp) => resp.cwd.as_path(),
+        }
+    }
+
+    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        match self {
+            ThreadStartOrResume::Start(resp) => resp.reasoning_effort,
+            ThreadStartOrResume::Resume(resp) => resp.reasoning_effort,
+        }
+    }
+
+    fn rollout_path(&self) -> &Path {
+        match self {
+            ThreadStartOrResume::Start(resp) => resp.thread.path.as_path(),
+            ThreadStartOrResume::Resume(resp) => resp.thread.path.as_path(),
+        }
+    }
 }
 
 fn next_request_id(next_id: &mut i64) -> RequestId {
@@ -1283,6 +1402,7 @@ done
                     },
                     codex_home: None,
                     thread_cwd: None,
+                    resume_thread_id: None,
                 },
                 &mut op_rx,
                 &event_tx,
@@ -1458,6 +1578,7 @@ done
                     },
                     codex_home: None,
                     thread_cwd: None,
+                    resume_thread_id: None,
                 },
                 &mut op_rx,
                 &event_tx,
@@ -1608,6 +1729,7 @@ done
                     },
                     codex_home: None,
                     thread_cwd: None,
+                    resume_thread_id: None,
                 },
                 &mut op_rx,
                 &event_tx,
@@ -1755,6 +1877,7 @@ touch "$MARKER"
                     },
                     codex_home: None,
                     thread_cwd: None,
+                    resume_thread_id: None,
                 },
                 &mut op_rx,
                 &event_tx,
@@ -1854,6 +1977,7 @@ touch "$MARKER"
                     },
                     codex_home: None,
                     thread_cwd: None,
+                    resume_thread_id: None,
                 },
                 &mut op_rx,
                 &event_tx,
@@ -1938,6 +2062,7 @@ touch "$MARKER"
                     },
                     codex_home: None,
                     thread_cwd: None,
+                    resume_thread_id: None,
                 },
                 &mut op_rx,
                 &event_tx,
@@ -2031,6 +2156,7 @@ touch "$MARKER"
                     },
                     codex_home: Some(codex_home),
                     thread_cwd: None,
+                    resume_thread_id: None,
                 },
                 &mut op_rx,
                 &event_tx,

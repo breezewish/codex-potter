@@ -42,6 +42,19 @@ pub struct PotterRoundOptions {
     pub session_succeeded_rounds: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct PotterContinueRoundOptions {
+    /// Whether to pad the transcript with a blank line before the first rendered cell.
+    pub pad_before_first_cell: bool,
+    pub round_current: u32,
+    pub round_total: u32,
+    pub session_succeeded_rounds: u32,
+    /// Existing Codex thread to resume for this unfinished round.
+    pub resume_thread_id: codex_protocol::ThreadId,
+    /// Persisted EventMsg items from the upstream rollout to replay before continuing.
+    pub replay_event_msgs: Vec<EventMsg>,
+}
+
 #[derive(Debug)]
 pub struct PotterRoundResult {
     pub exit_reason: ExitReason,
@@ -59,6 +72,93 @@ pub async fn run_potter_round(
         round_current,
         round_total,
         session_succeeded_rounds,
+    } = options;
+
+    run_potter_round_inner(
+        ui,
+        context,
+        PotterRoundInnerOptions {
+            pad_before_first_cell,
+            session_started,
+            round_current,
+            round_total,
+            session_succeeded_rounds,
+            prompt: context.turn_prompt.clone(),
+            resume_thread_id: None,
+            record_round_started: true,
+            record_round_configured: true,
+            replay_event_msgs: Vec::new(),
+        },
+    )
+    .await
+}
+
+/// Continue an unfinished round by resuming its thread and sending a `Continue` prompt.
+///
+/// This is primarily used by `codex-potter resume` when the last recorded round has no
+/// `PotterRoundFinished` marker yet.
+pub async fn continue_potter_round(
+    ui: &mut codex_tui::CodexPotterTui,
+    context: &PotterRoundContext,
+    options: PotterContinueRoundOptions,
+) -> anyhow::Result<PotterRoundResult> {
+    let PotterContinueRoundOptions {
+        pad_before_first_cell,
+        round_current,
+        round_total,
+        session_succeeded_rounds,
+        resume_thread_id,
+        replay_event_msgs,
+    } = options;
+
+    run_potter_round_inner(
+        ui,
+        context,
+        PotterRoundInnerOptions {
+            pad_before_first_cell,
+            session_started: None,
+            round_current,
+            round_total,
+            session_succeeded_rounds,
+            prompt: String::from("Continue"),
+            resume_thread_id: Some(resume_thread_id),
+            record_round_started: false,
+            record_round_configured: false,
+            replay_event_msgs,
+        },
+    )
+    .await
+}
+
+struct PotterRoundInnerOptions {
+    pad_before_first_cell: bool,
+    session_started: Option<PotterSessionStartedInfo>,
+    round_current: u32,
+    round_total: u32,
+    session_succeeded_rounds: u32,
+    prompt: String,
+    resume_thread_id: Option<codex_protocol::ThreadId>,
+    record_round_started: bool,
+    record_round_configured: bool,
+    replay_event_msgs: Vec<EventMsg>,
+}
+
+async fn run_potter_round_inner(
+    ui: &mut codex_tui::CodexPotterTui,
+    context: &PotterRoundContext,
+    options: PotterRoundInnerOptions,
+) -> anyhow::Result<PotterRoundResult> {
+    let PotterRoundInnerOptions {
+        pad_before_first_cell,
+        session_started,
+        round_current,
+        round_total,
+        session_succeeded_rounds,
+        prompt,
+        resume_thread_id,
+        record_round_started,
+        record_round_configured,
+        replay_event_msgs,
     } = options;
 
     let (op_tx, op_rx) = unbounded_channel::<Op>();
@@ -93,14 +193,23 @@ pub async fn run_potter_round(
             total: round_total,
         },
     });
-    crate::potter_rollout::append_line(
-        &context.potter_rollout_path,
-        &crate::potter_rollout::PotterRolloutLine::RoundStarted {
-            current: round_current,
-            total: round_total,
-        },
-    )
-    .context("append potter-rollout round_started")?;
+    if record_round_started {
+        crate::potter_rollout::append_line(
+            &context.potter_rollout_path,
+            &crate::potter_rollout::PotterRolloutLine::RoundStarted {
+                current: round_current,
+                total: round_total,
+            },
+        )
+        .context("append potter-rollout round_started")?;
+    }
+
+    for msg in replay_event_msgs {
+        let _ = ui_event_tx.send(Event {
+            id: "".to_string(),
+            msg,
+        });
+    }
 
     let forwarder = {
         let ui_event_tx = ui_event_tx.clone();
@@ -113,7 +222,7 @@ pub async fn run_potter_round(
         let project_started_at = context.project_started_at;
 
         tokio::spawn(async move {
-            let mut has_recorded_round_configured = false;
+            let mut has_recorded_round_configured = !record_round_configured;
             while let Some(event) = backend_event_rx.recv().await {
                 if !has_recorded_round_configured
                     && let EventMsg::SessionConfigured(cfg) = &event.msg
@@ -209,6 +318,7 @@ pub async fn run_potter_round(
             launch: context.backend_launch,
             codex_home: context.codex_compat_home.clone(),
             thread_cwd: context.thread_cwd.clone(),
+            resume_thread_id,
         },
         op_rx,
         backend_event_tx,
@@ -217,7 +327,7 @@ pub async fn run_potter_round(
 
     let exit_info = ui
         .render_turn(
-            context.turn_prompt.clone(),
+            prompt,
             pad_before_first_cell,
             op_tx,
             ui_event_rx,
