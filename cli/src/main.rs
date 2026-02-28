@@ -10,6 +10,7 @@ mod potter_stream_recovery;
 mod project;
 mod prompt_queue;
 mod resume;
+mod round_runner;
 mod startup;
 
 use std::num::NonZeroUsize;
@@ -23,11 +24,7 @@ use clap::FromArgMatches;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::Op;
 use codex_tui::ExitReason;
-use tokio::sync::mpsc::unbounded_channel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 #[clap(rename_all = "kebab-case")]
@@ -126,6 +123,9 @@ async fn main() -> anyhow::Result<()> {
 
     let workdir = std::env::current_dir().context("resolve current directory")?;
 
+    let backend_launch = app_server_backend::AppServerLaunchConfig::from_cli(sandbox, bypass);
+    let turn_prompt = crate::project::fixed_prompt().trim_end().to_string();
+
     let codex_compat_home = match crate::codex_compat::ensure_default_codex_compat_home() {
         Ok(home) => home,
         Err(err) => {
@@ -149,9 +149,22 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(project_path) = resume_project_path {
-        crate::resume::run_resume(&mut ui, &workdir, &project_path)
-            .await
-            .context("resume project")?;
+        let resume_exit = crate::resume::run_resume(
+            &mut ui,
+            &workdir,
+            &project_path,
+            codex_bin.clone(),
+            backend_launch,
+            codex_compat_home.clone(),
+        )
+        .await
+        .context("resume project")?;
+        if resume_exit == crate::resume::ResumeExit::FatalExitRequested {
+            // `std::process::exit` skips destructors, so explicitly drop the UI to restore terminal
+            // state before exiting.
+            drop(ui);
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
@@ -161,10 +174,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Clear prompt UI remnants before doing any work / streaming output.
     ui.clear()?;
-
-    let backend_launch = app_server_backend::AppServerLaunchConfig::from_cli(sandbox, bypass);
-
-    let turn_prompt = crate::project::fixed_prompt().trim_end().to_string();
 
     let mut pending_user_prompts = prompt_queue::PromptQueue::new(user_prompt);
 
@@ -198,188 +207,52 @@ async fn main() -> anyhow::Result<()> {
         let user_prompt_file = init.progress_file_rel.clone();
         let developer_prompt = crate::project::render_developer_prompt(&init.progress_file_rel);
 
-        for round_index in 0..cli.rounds.get() {
-            let (op_tx, op_rx) = unbounded_channel::<Op>();
-            let (backend_event_tx, mut backend_event_rx) = unbounded_channel::<Event>();
-            let (ui_event_tx, ui_event_rx) = unbounded_channel::<Event>();
-            let (fatal_exit_tx, fatal_exit_rx) = unbounded_channel::<String>();
+        let round_context = crate::round_runner::PotterRoundContext {
+            codex_bin: codex_bin.clone(),
+            developer_prompt: developer_prompt.clone(),
+            backend_launch,
+            codex_compat_home: codex_compat_home.clone(),
+            thread_cwd: Some(workdir.clone()),
+            turn_prompt: turn_prompt.clone(),
+            workdir: workdir.clone(),
+            progress_file_rel: init.progress_file_rel.clone(),
+            user_prompt_file: user_prompt_file.clone(),
+            git_commit_start: init.git_commit_start.clone(),
+            potter_rollout_path: potter_rollout_path.clone(),
+            project_started_at,
+        };
 
-            let potter_event_tx = ui_event_tx.clone();
-            if round_index == 0 {
-                let _ = potter_event_tx.send(Event {
-                    id: "".to_string(),
-                    msg: EventMsg::PotterSessionStarted {
-                        user_message: Some(user_prompt.clone()),
-                        working_dir: workdir.clone(),
-                        project_dir: project_dir.clone(),
-                        user_prompt_file: user_prompt_file.clone(),
-                    },
-                });
-                crate::potter_rollout::append_line(
-                    &potter_rollout_path,
-                    &crate::potter_rollout::PotterRolloutLine::SessionStarted {
-                        user_message: Some(user_prompt.clone()),
-                        user_prompt_file: user_prompt_file.clone(),
-                    },
-                )
-                .context("append potter-rollout session_started")?;
-            }
+        for round_index in 0..cli.rounds.get() {
             let total_rounds = u32::try_from(cli.rounds.get()).unwrap_or(u32::MAX);
             let current_round = u32::try_from(round_index.saturating_add(1)).unwrap_or(u32::MAX);
-            let _ = potter_event_tx.send(Event {
-                id: "".to_string(),
-                msg: EventMsg::PotterRoundStarted {
-                    current: current_round,
-                    total: total_rounds,
-                },
-            });
-            crate::potter_rollout::append_line(
-                &potter_rollout_path,
-                &crate::potter_rollout::PotterRolloutLine::RoundStarted {
-                    current: current_round,
-                    total: total_rounds,
-                },
-            )
-            .context("append potter-rollout round_started")?;
-
-            let forwarder = {
-                let ui_event_tx = ui_event_tx.clone();
-                let workdir = workdir.clone();
-                let progress_file_rel = init.progress_file_rel.clone();
-                let user_prompt_file = user_prompt_file.clone();
-                let git_commit_start = init.git_commit_start.clone();
-                let potter_rollout_path = potter_rollout_path.clone();
-                let fatal_exit_tx = fatal_exit_tx.clone();
-                tokio::spawn(async move {
-                    let mut has_recorded_round_configured = false;
-                    while let Some(event) = backend_event_rx.recv().await {
-                        if !has_recorded_round_configured
-                            && let EventMsg::SessionConfigured(cfg) = &event.msg
-                        {
-                            has_recorded_round_configured = true;
-                            let (rollout_path, rollout_path_raw, rollout_base_dir) =
-                                crate::potter_rollout::resolve_rollout_path_for_recording(
-                                    cfg.rollout_path.clone(),
-                                    &workdir,
-                                );
-                            if let Err(err) = crate::potter_rollout::append_line(
-                                &potter_rollout_path,
-                                &crate::potter_rollout::PotterRolloutLine::RoundConfigured {
-                                    thread_id: cfg.session_id,
-                                    rollout_path,
-                                    rollout_path_raw,
-                                    rollout_base_dir,
-                                },
-                            ) {
-                                let _ = fatal_exit_tx.send(format!(
-                                    "failed to write {}: {err:#}",
-                                    potter_rollout_path.display()
-                                ));
-                                break;
-                            }
-                        }
-
-                        if matches!(
-                            &event.msg,
-                            EventMsg::PotterRoundFinished {
-                                outcome: codex_protocol::protocol::PotterRoundOutcome::Completed
-                            }
-                        ) && crate::project::progress_file_has_finite_incantatem_true(
-                            &workdir,
-                            &progress_file_rel,
-                        )
-                        .unwrap_or(false)
-                        {
-                            if let Err(err) = crate::potter_rollout::append_line(
-                                &potter_rollout_path,
-                                &crate::potter_rollout::PotterRolloutLine::SessionSucceeded {
-                                    rounds: current_round,
-                                    duration_secs: project_started_at.elapsed().as_secs(),
-                                    user_prompt_file: user_prompt_file.clone(),
-                                    git_commit_start: git_commit_start.clone(),
-                                    git_commit_end: crate::project::resolve_git_commit(&workdir),
-                                },
-                            ) {
-                                let _ = fatal_exit_tx.send(format!(
-                                    "failed to write {}: {err:#}",
-                                    potter_rollout_path.display()
-                                ));
-                                break;
-                            }
-                            let _ = ui_event_tx.send(Event {
-                                id: "".to_string(),
-                                msg: EventMsg::PotterSessionSucceeded {
-                                    rounds: current_round,
-                                    duration: project_started_at.elapsed(),
-                                    user_prompt_file: user_prompt_file.clone(),
-                                    git_commit_start: git_commit_start.clone(),
-                                    git_commit_end: crate::project::resolve_git_commit(&workdir),
-                                },
-                            });
-                        }
-
-                        if let EventMsg::PotterRoundFinished { outcome } = &event.msg
-                            && let Err(err) = crate::potter_rollout::append_line(
-                                &potter_rollout_path,
-                                &crate::potter_rollout::PotterRolloutLine::RoundFinished {
-                                    outcome: outcome.clone(),
-                                },
-                            )
-                        {
-                            let _ = fatal_exit_tx.send(format!(
-                                "failed to write {}: {err:#}",
-                                potter_rollout_path.display()
-                            ));
-                            break;
-                        }
-
-                        if ui_event_tx.send(event).is_err() {
-                            break;
-                        }
-                    }
+            let session_started = if round_index == 0 {
+                Some(crate::round_runner::PotterSessionStartedInfo {
+                    user_message: Some(user_prompt.clone()),
+                    working_dir: workdir.clone(),
+                    project_dir: project_dir.clone(),
+                    user_prompt_file: user_prompt_file.clone(),
                 })
+            } else {
+                None
             };
 
-            let backend = tokio::spawn(app_server_backend::run_app_server_backend(
-                codex_bin.clone(),
-                Some(developer_prompt.clone()),
-                backend_launch,
-                codex_compat_home.clone(),
-                op_rx,
-                backend_event_tx,
-                fatal_exit_tx,
-            ));
+            let round_result = crate::round_runner::run_potter_round(
+                &mut ui,
+                &round_context,
+                crate::round_runner::PotterRoundOptions {
+                    pad_before_first_cell: round_index != 0,
+                    session_started,
+                    round_current: current_round,
+                    round_total: total_rounds,
+                    session_succeeded_rounds: current_round,
+                },
+            )
+            .await?;
 
-            let exit_info = ui
-                .render_turn(
-                    turn_prompt.clone(),
-                    round_index != 0,
-                    op_tx,
-                    ui_event_rx,
-                    fatal_exit_rx,
-                )
-                .await?;
-
-            match &exit_info.exit_reason {
-                ExitReason::UserRequested => {
-                    backend.abort();
-                    forwarder.abort();
-                    let _ = backend.await;
-                    let _ = forwarder.await;
-                    break 'session;
-                }
-                ExitReason::TaskFailed(_) => {
-                    backend.abort();
-                    forwarder.abort();
-                    let _ = backend.await;
-                    let _ = forwarder.await;
-                    break;
-                }
+            match &round_result.exit_reason {
+                ExitReason::UserRequested => break 'session,
+                ExitReason::TaskFailed(_) => break,
                 ExitReason::Fatal(_) => {
-                    backend.abort();
-                    forwarder.abort();
-                    let _ = backend.await;
-                    let _ = forwarder.await;
                     // `std::process::exit` skips destructors, so explicitly drop the UI to restore
                     // terminal state before exiting.
                     drop(ui);
@@ -387,17 +260,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 ExitReason::Completed => {}
             }
-
-            backend
-                .await
-                .context("app-server render backend panicked")??;
-            let _ = forwarder.await;
-            if crate::project::progress_file_has_finite_incantatem_true(
-                &workdir,
-                &init.progress_file_rel,
-            )
-            .context("check progress file finite_incantatem")?
-            {
+            if round_result.stop_due_to_finite_incantatem {
                 break;
             }
         }

@@ -2,6 +2,7 @@ use std::ffi::OsStr;
 use std::io::BufRead as _;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::Context;
 use codex_protocol::protocol::Event;
@@ -88,11 +89,25 @@ pub async fn run_resume(
     ui: &mut codex_tui::CodexPotterTui,
     cwd: &Path,
     project_path: &Path,
-) -> anyhow::Result<()> {
+    codex_bin: String,
+    backend_launch: crate::app_server_backend::AppServerLaunchConfig,
+    codex_compat_home: Option<PathBuf>,
+) -> anyhow::Result<ResumeExit> {
     let resolved = resolve_project_paths(cwd, project_path)?;
+    std::env::set_current_dir(&resolved.workdir)
+        .with_context(|| format!("set current directory to {}", resolved.workdir.display()))?;
+
+    let progress_file_rel = resolved
+        .progress_file
+        .strip_prefix(&resolved.workdir)
+        .context("derive progress file relative path")?
+        .to_path_buf();
     let potter_rollout_path = crate::potter_rollout::potter_rollout_path(&resolved.project_dir);
     let potter_rollout_lines = crate::potter_rollout::read_lines(&potter_rollout_path)
         .with_context(|| format!("read {}", potter_rollout_path.display()))?;
+    if potter_rollout_lines.is_empty() {
+        anyhow::bail!("potter-rollout is empty: {}", potter_rollout_path.display());
+    }
 
     let round_plans = build_round_replay_plans(&resolved, &potter_rollout_lines)?;
 
@@ -101,6 +116,7 @@ pub async fn run_resume(
 
     ui.clear().context("clear TUI before resume replay")?;
 
+    let mut user_cancelled_replay = false;
     for (idx, plan) in round_plans.into_iter().enumerate() {
         let RoundReplayPlan { events, outcome } = plan;
         let (event_tx, event_rx) = unbounded_channel::<Event>();
@@ -125,11 +141,10 @@ pub async fn run_resume(
             .await?;
 
         match &exit_info.exit_reason {
-            ExitReason::Fatal(message) => {
-                anyhow::bail!("resume replay exited fatally: {message}");
-            }
+            ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
             ExitReason::UserRequested => {
                 if !matches!(outcome, PotterRoundOutcome::UserRequested) {
+                    user_cancelled_replay = true;
                     break;
                 }
             }
@@ -137,7 +152,86 @@ pub async fn run_resume(
         }
     }
 
-    Ok(())
+    if user_cancelled_replay {
+        return Ok(ResumeExit::Completed);
+    }
+
+    let selection = ui
+        .prompt_action_picker(vec!["Iterate 10 more rounds".to_string()])
+        .await?;
+    let Some(index) = selection else {
+        return Ok(ResumeExit::Completed);
+    };
+    if index != 0 {
+        return Ok(ResumeExit::Completed);
+    }
+
+    crate::project::set_progress_file_finite_incantatem(
+        &resolved.workdir,
+        &progress_file_rel,
+        false,
+    )
+    .context("reset progress file finite_incantatem")?;
+
+    let baseline_rounds = count_completed_rounds(&potter_rollout_lines);
+    let baseline_rounds_u32 = u32::try_from(baseline_rounds).unwrap_or(u32::MAX);
+
+    let developer_prompt = crate::project::render_developer_prompt(&progress_file_rel);
+    let turn_prompt = crate::project::fixed_prompt().trim_end().to_string();
+    let git_commit_start =
+        crate::project::progress_file_git_commit_start(&resolved.workdir, &progress_file_rel)
+            .context("read git_commit from progress file")?;
+
+    let round_context = crate::round_runner::PotterRoundContext {
+        codex_bin,
+        developer_prompt,
+        backend_launch,
+        codex_compat_home,
+        thread_cwd: Some(resolved.workdir.clone()),
+        turn_prompt,
+        workdir: resolved.workdir.clone(),
+        progress_file_rel: progress_file_rel.clone(),
+        user_prompt_file: progress_file_rel.clone(),
+        git_commit_start,
+        potter_rollout_path,
+        project_started_at: Instant::now(),
+    };
+
+    const ITERATE_ROUNDS: u32 = 10;
+    for offset in 0..ITERATE_ROUNDS {
+        let current_round = offset.saturating_add(1);
+        let session_succeeded_rounds = baseline_rounds_u32.saturating_add(current_round);
+        let round_result = crate::round_runner::run_potter_round(
+            ui,
+            &round_context,
+            crate::round_runner::PotterRoundOptions {
+                pad_before_first_cell: true,
+                session_started: None,
+                round_current: current_round,
+                round_total: ITERATE_ROUNDS,
+                session_succeeded_rounds,
+            },
+        )
+        .await?;
+
+        match &round_result.exit_reason {
+            ExitReason::UserRequested => break,
+            ExitReason::TaskFailed(_) => break,
+            ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
+            ExitReason::Completed => {}
+        }
+        if round_result.stop_due_to_finite_incantatem {
+            break;
+        }
+    }
+
+    Ok(ResumeExit::Completed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeExit {
+    Completed,
+    FatalExitRequested,
 }
 
 fn build_candidate_progress_files(cwd: &Path, project_path: &Path) -> Vec<PathBuf> {
@@ -189,6 +283,18 @@ fn derive_project_workdir(progress_file: &Path) -> anyhow::Result<PathBuf> {
 struct RoundReplayPlan {
     events: Vec<EventMsg>,
     outcome: PotterRoundOutcome,
+}
+
+fn count_completed_rounds(lines: &[crate::potter_rollout::PotterRolloutLine]) -> usize {
+    lines
+        .iter()
+        .filter(|line| {
+            matches!(
+                line,
+                crate::potter_rollout::PotterRolloutLine::RoundFinished { .. }
+            )
+        })
+        .count()
 }
 
 fn build_round_replay_plans(

@@ -88,6 +88,34 @@ pub fn progress_file_has_finite_incantatem_true(
     Ok(front_matter_bool(&contents, "finite_incantatem").unwrap_or(false))
 }
 
+/// Set `finite_incantatem` in the progress file YAML front matter.
+pub fn set_progress_file_finite_incantatem(
+    workdir: &Path,
+    progress_file_rel: &Path,
+    value: bool,
+) -> anyhow::Result<()> {
+    let progress_file = workdir.join(progress_file_rel);
+    let contents = std::fs::read_to_string(&progress_file)
+        .with_context(|| format!("read {}", progress_file.display()))?;
+    let updated = set_front_matter_bool(&contents, "finite_incantatem", value)?;
+    if updated != contents {
+        std::fs::write(&progress_file, updated)
+            .with_context(|| format!("write {}", progress_file.display()))?;
+    }
+    Ok(())
+}
+
+/// Return the `git_commit` value recorded in the progress file front matter.
+pub fn progress_file_git_commit_start(
+    workdir: &Path,
+    progress_file_rel: &Path,
+) -> anyhow::Result<String> {
+    let progress_file = workdir.join(progress_file_rel);
+    let contents = std::fs::read_to_string(&progress_file)
+        .with_context(|| format!("read {}", progress_file.display()))?;
+    Ok(front_matter_string(&contents, "git_commit").unwrap_or_default())
+}
+
 fn create_next_project_dir(
     projects_root: &Path,
     year: &str,
@@ -146,6 +174,99 @@ fn front_matter_bool(contents: &str, key: &str) -> Option<bool> {
     }
 
     None
+}
+
+fn front_matter_string(contents: &str, key: &str) -> Option<String> {
+    let mut lines = contents.lines();
+    let first = lines.next()?.trim_end();
+    if first != "---" {
+        return None;
+    }
+
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if k.trim() != key {
+            continue;
+        }
+
+        let raw = v.trim();
+        let first_token = raw.split_whitespace().next().unwrap_or_default();
+        let unquoted = first_token.trim_matches(&['"', '\''][..]);
+        return Some(unquoted.to_string());
+    }
+
+    None
+}
+
+fn set_front_matter_bool(contents: &str, key: &str, value: bool) -> anyhow::Result<String> {
+    let mut lines = contents.lines();
+    let first = lines
+        .next()
+        .map(str::trim_end)
+        .context("progress file is empty")?;
+    if first != "---" {
+        anyhow::bail!("progress file missing YAML front matter delimiter `---` at top");
+    }
+
+    let mut out = String::new();
+    out.push_str(first);
+    out.push('\n');
+
+    let mut in_front_matter = true;
+    let mut saw_footer = false;
+    for line in lines {
+        if in_front_matter {
+            let trimmed = line.trim_end();
+            if trimmed == "---" {
+                in_front_matter = false;
+                saw_footer = true;
+                out.push_str(trimmed);
+                out.push('\n');
+                continue;
+            }
+
+            let mut replaced = false;
+            if let Some((k, _)) = trimmed.split_once(':')
+                && k.trim() == key
+            {
+                let comment = trimmed.find('#').map(|idx| &trimmed[idx..]);
+                let key_part = &trimmed[..trimmed.find(':').expect("split_once") + 1];
+                out.push_str(key_part);
+                out.push(' ');
+                out.push_str(if value { "true" } else { "false" });
+                if let Some(comment) = comment {
+                    out.push(' ');
+                    out.push_str(comment);
+                }
+                out.push('\n');
+                replaced = true;
+            }
+
+            if !replaced {
+                out.push_str(trimmed);
+                out.push('\n');
+            }
+            continue;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if !saw_footer {
+        anyhow::bail!("progress file YAML front matter missing closing `---`");
+    }
+
+    Ok(out)
 }
 
 fn resolve_git_metadata(workdir: &Path) -> (String, String) {
@@ -223,6 +344,45 @@ mod tests {
 
         let developer = render_developer_prompt(&second.progress_file_rel);
         assert!(developer.contains(".codexpotter/projects/2026/01/27/2/MAIN.md"));
+    }
+
+    #[test]
+    fn set_progress_file_finite_incantatem_updates_front_matter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workdir = temp.path();
+        let rel = PathBuf::from(".codexpotter/projects/2026/01/27/1/MAIN.md");
+        let abs = workdir.join(&rel);
+        std::fs::create_dir_all(abs.parent().expect("parent")).expect("mkdir");
+
+        std::fs::write(
+            &abs,
+            "---\nstatus: open\nfinite_incantatem: true\n---\n\n# Goal\n\nHi\n",
+        )
+        .expect("write");
+
+        set_progress_file_finite_incantatem(workdir, &rel, false).expect("set false");
+        let updated = std::fs::read_to_string(&abs).expect("read updated");
+        assert!(updated.contains("finite_incantatem: false\n"));
+        assert!(updated.contains("status: open\n"));
+        assert!(updated.contains("# Goal\n"));
+    }
+
+    #[test]
+    fn progress_file_git_commit_start_reads_front_matter_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workdir = temp.path();
+        let rel = PathBuf::from(".codexpotter/projects/2026/01/27/1/MAIN.md");
+        let abs = workdir.join(&rel);
+        std::fs::create_dir_all(abs.parent().expect("parent")).expect("mkdir");
+
+        std::fs::write(
+            &abs,
+            "---\nstatus: open\ngit_commit: \"abc123\"\n---\n\n# Goal\n\nHi\n",
+        )
+        .expect("write");
+
+        let got = progress_file_git_commit_start(workdir, &rel).expect("read git_commit");
+        assert_eq!(got, "abc123");
     }
 
     #[test]

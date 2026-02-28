@@ -95,26 +95,22 @@ impl AppServerLaunchConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppServerBackendConfig {
+    pub codex_bin: String,
+    pub developer_instructions: Option<String>,
+    pub launch: AppServerLaunchConfig,
+    pub codex_home: Option<PathBuf>,
+    pub thread_cwd: Option<PathBuf>,
+}
+
 pub async fn run_app_server_backend(
-    codex_bin: String,
-    developer_instructions: Option<String>,
-    launch: AppServerLaunchConfig,
-    codex_home: Option<PathBuf>,
+    config: AppServerBackendConfig,
     mut op_rx: UnboundedReceiver<Op>,
     event_tx: UnboundedSender<Event>,
     fatal_exit_tx: UnboundedSender<String>,
 ) -> anyhow::Result<()> {
-    match run_app_server_backend_inner(
-        codex_bin,
-        developer_instructions,
-        launch,
-        codex_home,
-        &mut op_rx,
-        &event_tx,
-        &fatal_exit_tx,
-    )
-    .await
-    {
+    match run_app_server_backend_inner(config, &mut op_rx, &event_tx, &fatal_exit_tx).await {
         Ok(()) => Ok(()),
         Err(err) => {
             let message = format!("Failed to run `codex app-server`: {err}");
@@ -135,14 +131,18 @@ pub async fn run_app_server_backend(
 }
 
 async fn run_app_server_backend_inner(
-    codex_bin: String,
-    developer_instructions: Option<String>,
-    launch: AppServerLaunchConfig,
-    codex_home: Option<PathBuf>,
+    config: AppServerBackendConfig,
     op_rx: &mut UnboundedReceiver<Op>,
     event_tx: &UnboundedSender<Event>,
     fatal_exit_tx: &UnboundedSender<String>,
 ) -> anyhow::Result<()> {
+    let AppServerBackendConfig {
+        codex_bin,
+        developer_instructions,
+        launch,
+        codex_home,
+        thread_cwd,
+    } = config;
     let (mut child, stdin, stdout, stderr) =
         spawn_app_server(&codex_bin, launch, codex_home.as_deref()).await?;
     let stderr_capture = Arc::new(Mutex::new(Vec::<u8>::new()));
@@ -217,6 +217,7 @@ async fn run_app_server_backend_inner(
             ThreadStartSettings {
                 developer_instructions,
                 sandbox_mode: launch.thread_sandbox,
+                cwd: thread_cwd,
             },
             &mut recovery,
             event_tx,
@@ -459,6 +460,7 @@ async fn initialize_app_server(
 struct ThreadStartSettings {
     developer_instructions: Option<String>,
     sandbox_mode: Option<crate::app_server_protocol::SandboxMode>,
+    cwd: Option<PathBuf>,
 }
 
 async fn thread_start(
@@ -472,6 +474,7 @@ async fn thread_start(
     let ThreadStartSettings {
         developer_instructions,
         sandbox_mode,
+        cwd,
     } = settings;
     let request_id = next_request_id(next_id);
     let request = ClientRequest::ThreadStart {
@@ -479,7 +482,7 @@ async fn thread_start(
         params: ThreadStartParams {
             model: None,
             model_provider: None,
-            cwd: None,
+            cwd: cwd.map(|cwd| cwd.to_string_lossy().to_string()),
             approval_policy: Some(crate::app_server_protocol::AskForApproval::Never),
             sandbox: sandbox_mode,
             config: None,
@@ -1270,14 +1273,17 @@ done
         let (op_tx, mut op_rx) = unbounded_channel::<Op>();
         let backend = tokio::spawn(async move {
             run_app_server_backend_inner(
-                codex_bin.display().to_string(),
-                None,
-                AppServerLaunchConfig {
-                    spawn_sandbox: None,
-                    thread_sandbox: None,
-                    bypass_approvals_and_sandbox: false,
+                AppServerBackendConfig {
+                    codex_bin: codex_bin.display().to_string(),
+                    developer_instructions: None,
+                    launch: AppServerLaunchConfig {
+                        spawn_sandbox: None,
+                        thread_sandbox: None,
+                        bypass_approvals_and_sandbox: false,
+                    },
+                    codex_home: None,
+                    thread_cwd: None,
                 },
-                None,
                 &mut op_rx,
                 &event_tx,
                 &fatal_exit_tx,
@@ -1442,14 +1448,17 @@ done
         let (op_tx, mut op_rx) = unbounded_channel::<Op>();
         let backend = tokio::spawn(async move {
             run_app_server_backend_inner(
-                codex_bin.display().to_string(),
-                None,
-                AppServerLaunchConfig {
-                    spawn_sandbox: None,
-                    thread_sandbox: None,
-                    bypass_approvals_and_sandbox: false,
+                AppServerBackendConfig {
+                    codex_bin: codex_bin.display().to_string(),
+                    developer_instructions: None,
+                    launch: AppServerLaunchConfig {
+                        spawn_sandbox: None,
+                        thread_sandbox: None,
+                        bypass_approvals_and_sandbox: false,
+                    },
+                    codex_home: None,
+                    thread_cwd: None,
                 },
-                None,
                 &mut op_rx,
                 &event_tx,
                 &fatal_exit_tx,
@@ -1589,14 +1598,17 @@ done
         let (op_tx, mut op_rx) = unbounded_channel::<Op>();
         let backend = tokio::spawn(async move {
             run_app_server_backend_inner(
-                codex_bin.display().to_string(),
-                None,
-                AppServerLaunchConfig {
-                    spawn_sandbox: None,
-                    thread_sandbox: None,
-                    bypass_approvals_and_sandbox: false,
+                AppServerBackendConfig {
+                    codex_bin: codex_bin.display().to_string(),
+                    developer_instructions: None,
+                    launch: AppServerLaunchConfig {
+                        spawn_sandbox: None,
+                        thread_sandbox: None,
+                        bypass_approvals_and_sandbox: false,
+                    },
+                    codex_home: None,
+                    thread_cwd: None,
                 },
-                None,
                 &mut op_rx,
                 &event_tx,
                 &fatal_exit_tx,
@@ -1731,14 +1743,19 @@ touch "$MARKER"
         timeout(
             Duration::from_secs(5),
             run_app_server_backend_inner(
-                codex_bin.display().to_string(),
-                None,
-                AppServerLaunchConfig {
-                    spawn_sandbox: None,
-                    thread_sandbox: Some(crate::app_server_protocol::SandboxMode::DangerFullAccess),
-                    bypass_approvals_and_sandbox: true,
+                AppServerBackendConfig {
+                    codex_bin: codex_bin.display().to_string(),
+                    developer_instructions: None,
+                    launch: AppServerLaunchConfig {
+                        spawn_sandbox: None,
+                        thread_sandbox: Some(
+                            crate::app_server_protocol::SandboxMode::DangerFullAccess,
+                        ),
+                        bypass_approvals_and_sandbox: true,
+                    },
+                    codex_home: None,
+                    thread_cwd: None,
                 },
-                None,
                 &mut op_rx,
                 &event_tx,
                 &fatal_exit_tx,
@@ -1823,14 +1840,21 @@ touch "$MARKER"
         timeout(
             Duration::from_secs(5),
             run_app_server_backend_inner(
-                codex_bin.display().to_string(),
-                None,
-                AppServerLaunchConfig {
-                    spawn_sandbox: Some(crate::app_server_protocol::SandboxMode::WorkspaceWrite),
-                    thread_sandbox: Some(crate::app_server_protocol::SandboxMode::WorkspaceWrite),
-                    bypass_approvals_and_sandbox: false,
+                AppServerBackendConfig {
+                    codex_bin: codex_bin.display().to_string(),
+                    developer_instructions: None,
+                    launch: AppServerLaunchConfig {
+                        spawn_sandbox: Some(
+                            crate::app_server_protocol::SandboxMode::WorkspaceWrite,
+                        ),
+                        thread_sandbox: Some(
+                            crate::app_server_protocol::SandboxMode::WorkspaceWrite,
+                        ),
+                        bypass_approvals_and_sandbox: false,
+                    },
+                    codex_home: None,
+                    thread_cwd: None,
                 },
-                None,
                 &mut op_rx,
                 &event_tx,
                 &fatal_exit_tx,
@@ -1904,14 +1928,17 @@ touch "$MARKER"
         timeout(
             Duration::from_secs(5),
             run_app_server_backend_inner(
-                codex_bin.display().to_string(),
-                None,
-                AppServerLaunchConfig {
-                    spawn_sandbox: None,
-                    thread_sandbox: None,
-                    bypass_approvals_and_sandbox: false,
+                AppServerBackendConfig {
+                    codex_bin: codex_bin.display().to_string(),
+                    developer_instructions: None,
+                    launch: AppServerLaunchConfig {
+                        spawn_sandbox: None,
+                        thread_sandbox: None,
+                        bypass_approvals_and_sandbox: false,
+                    },
+                    codex_home: None,
+                    thread_cwd: None,
                 },
-                None,
                 &mut op_rx,
                 &event_tx,
                 &fatal_exit_tx,
@@ -1994,14 +2021,17 @@ touch "$MARKER"
         timeout(
             Duration::from_secs(5),
             run_app_server_backend_inner(
-                codex_bin.display().to_string(),
-                None,
-                AppServerLaunchConfig {
-                    spawn_sandbox: None,
-                    thread_sandbox: None,
-                    bypass_approvals_and_sandbox: false,
+                AppServerBackendConfig {
+                    codex_bin: codex_bin.display().to_string(),
+                    developer_instructions: None,
+                    launch: AppServerLaunchConfig {
+                        spawn_sandbox: None,
+                        thread_sandbox: None,
+                        bypass_approvals_and_sandbox: false,
+                    },
+                    codex_home: Some(codex_home),
+                    thread_cwd: None,
                 },
-                Some(codex_home),
                 &mut op_rx,
                 &event_tx,
                 &fatal_exit_tx,
