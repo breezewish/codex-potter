@@ -1,0 +1,11 @@
+---
+source: tui/src/action_picker_prompt.rs
+expression: terminal.backend()
+---
+"                                                      "
+"                                                      "
+"  Select Action                                       "
+"                                                      "
+"› 1. Iterate 10 more rounds                           "
+"                                                      "
+"  Press enter to run, or esc to exit.                 "

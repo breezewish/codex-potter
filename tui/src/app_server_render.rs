@@ -741,17 +741,12 @@ impl RenderOnlyProcessor {
                 self.maybe_emit_final_message_separator();
                 self.emit_agent_message(&ev.message);
             }
-            EventMsg::TurnComplete(ev) => {
+            EventMsg::TurnComplete(_) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
                 // Flush any remaining agent markdown buffer.
                 if let Some(cell) = self.stream.finalize() {
                     self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
-                } else if !self.saw_agent_delta
-                    && let Some(last) = ev.last_agent_message
-                {
-                    self.maybe_emit_final_message_separator();
-                    self.emit_agent_message(&last);
                 }
                 self.app_event_tx.send(AppEvent::StopCommitAnimation);
                 if let Some(done) = self.pending_potter_session_succeeded.take() {
@@ -2808,6 +2803,30 @@ mod tests {
             "render_only_context_compacted_vt100",
             terminal.backend().vt100().screen().contents()
         );
+    }
+
+    #[test]
+    fn render_only_does_not_duplicate_agent_message_on_turn_complete_last_agent_message() {
+        let width: u16 = 80;
+
+        let (mut proc, mut rx) = make_render_only_processor_without_prompt();
+
+        proc.handle_codex_event(Event {
+            id: "agent-message".into(),
+            msg: EventMsg::AgentMessage(AgentMessageEvent {
+                message: "hello".to_string(),
+            }),
+        });
+
+        proc.handle_codex_event(Event {
+            id: "turn-complete".into(),
+            msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                last_agent_message: Some("hello".to_string()),
+            }),
+        });
+
+        let cells = drain_history_cell_strings(&mut rx, width);
+        pretty_assertions::assert_eq!(cells, vec![vec!["• hello".to_string()]]);
     }
 
     #[tokio::test]

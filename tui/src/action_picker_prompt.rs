@@ -1,6 +1,7 @@
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+use ratatui::prelude::Widget;
 use ratatui::text::Line;
 use tokio_stream::StreamExt;
 
@@ -32,8 +33,16 @@ pub async fn prompt_action_picker(
     });
 
     let width = tui.terminal.last_known_screen_size.width.max(1);
-    tui.draw(view.desired_height(width), |frame| {
-        view.render(frame.area(), frame.buffer_mut());
+    tui.draw(view.desired_height(width).saturating_add(1), |frame| {
+        let area = frame.area();
+        ratatui::widgets::Clear.render(area, frame.buffer_mut());
+        let view_area = ratatui::layout::Rect::new(
+            area.x,
+            area.y.saturating_add(1),
+            area.width,
+            area.height.saturating_sub(1),
+        );
+        view.render(view_area, frame.buffer_mut());
     })?;
 
     let events = tui.event_stream();
@@ -62,8 +71,16 @@ pub async fn prompt_action_picker(
             TuiEvent::Paste(_) => {}
             TuiEvent::Draw => {
                 let width = tui.terminal.last_known_screen_size.width.max(1);
-                tui.draw(view.desired_height(width), |frame| {
-                    view.render(frame.area(), frame.buffer_mut());
+                tui.draw(view.desired_height(width).saturating_add(1), |frame| {
+                    let area = frame.area();
+                    ratatui::widgets::Clear.render(area, frame.buffer_mut());
+                    let view_area = ratatui::layout::Rect::new(
+                        area.x,
+                        area.y.saturating_add(1),
+                        area.width,
+                        area.height.saturating_sub(1),
+                    );
+                    view.render(view_area, frame.buffer_mut());
                 })?;
             }
         }
@@ -73,4 +90,44 @@ pub async fn prompt_action_picker(
     tui.terminal.clear()?;
 
     Ok(view.take_last_selected_index())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn action_picker_prompt_renders_with_top_padding_line() {
+        let view = ListSelectionView::new(SelectionViewParams {
+            title: Some("Select Action".to_string()),
+            footer_hint: Some(Line::from("Press enter to run, or esc to exit.")),
+            items: vec![SelectionItem {
+                name: "Iterate 10 more rounds".to_string(),
+                dismiss_on_select: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+
+        let width = 54;
+        let height = view.desired_height(width).saturating_add(1);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                ratatui::widgets::Clear.render(area, frame.buffer_mut());
+                let view_area = ratatui::layout::Rect::new(
+                    area.x,
+                    area.y.saturating_add(1),
+                    area.width,
+                    area.height.saturating_sub(1),
+                );
+                view.render(view_area, frame.buffer_mut());
+            })
+            .expect("draw");
+
+        insta::assert_snapshot!(terminal.backend());
+    }
 }
