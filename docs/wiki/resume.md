@@ -1,7 +1,8 @@
 # Resume (`codex-potter resume`)
 
 `codex-potter resume <PROJECT_PATH>` replays a previous CodexPotter project's history and then
-prompts for a follow-up action (currently: **Iterate 10 more rounds**).
+prompts for a follow-up action (currently: **Iterate N more rounds**, where `N` is `--rounds`
+(default: 10)).
 
 The implementation is intentionally conservative:
 
@@ -73,22 +74,22 @@ shares the same interaction model as upstream list selection popups:
 
 Currently the picker contains a single action:
 
-- `Iterate 10 more rounds`
+- `Iterate N more rounds` (controlled by `--rounds`, default: 10)
 
 ## Continuing after replay
 
-When the user selects "Iterate 10 more rounds", CodexPotter continues running additional rounds on
-the **same** project directory and appends new entries to `potter-rollout.jsonl`.
+When the user selects "Iterate N more rounds", CodexPotter continues running additional rounds on
+the **same** project directory and appends new entries to `potter-rollout.jsonl` (`N` is controlled
+by `--rounds`).
 
 Key behavior:
 
 - The progress file front matter is updated first: `finite_incantatem` is reset to `false` so the
   normal runner does not stop immediately after the next round.
-- The continue budget is fixed to 10 rounds, counted from the resume action.
+- The continue budget is `--rounds` (default: 10) rounds, counted from the resume action.
 - `potter-rollout.jsonl` is append-only; `session_started` is not written again.
 - New upstream rollouts are started via fresh app-server threads, just like a normal session.
 
 There is no explicit locking. Concurrent runs against the same project directory are unsupported
 and may corrupt the append-only logs; corruption is expected to be detected during replay and to
 surface as an explicit error rather than being silently ignored.
-

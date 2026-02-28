@@ -1,5 +1,6 @@
 use std::ffi::OsStr;
 use std::io::BufRead as _;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -92,6 +93,7 @@ pub async fn run_resume(
     codex_bin: String,
     backend_launch: crate::app_server_backend::AppServerLaunchConfig,
     codex_compat_home: Option<PathBuf>,
+    iterate_rounds: NonZeroUsize,
 ) -> anyhow::Result<ResumeExit> {
     let resolved = resolve_project_paths(cwd, project_path)?;
     std::env::set_current_dir(&resolved.workdir)
@@ -152,8 +154,18 @@ pub async fn run_resume(
         return Ok(ResumeExit::Completed);
     }
 
+    let iterate_rounds_usize = iterate_rounds.get();
+    let rounds_label = if iterate_rounds_usize == 1 {
+        "round"
+    } else {
+        "rounds"
+    };
+
     let selection = ui
-        .prompt_action_picker(vec!["Iterate 10 more rounds".to_string()])
+        .prompt_action_picker(vec![format!(
+            "Iterate {} more {}",
+            iterate_rounds_usize, rounds_label
+        )])
         .await?;
     let Some(index) = selection else {
         return Ok(ResumeExit::Completed);
@@ -193,9 +205,9 @@ pub async fn run_resume(
         project_started_at: Instant::now(),
     };
 
-    const ITERATE_ROUNDS: u32 = 10;
-    for offset in 0..ITERATE_ROUNDS {
-        let current_round = offset.saturating_add(1);
+    let iterate_rounds_u32 = u32::try_from(iterate_rounds_usize).unwrap_or(u32::MAX);
+    for offset in 0..iterate_rounds_usize {
+        let current_round = u32::try_from(offset.saturating_add(1)).unwrap_or(u32::MAX);
         let session_succeeded_rounds = baseline_rounds_u32.saturating_add(current_round);
         let round_result = crate::round_runner::run_potter_round(
             ui,
@@ -204,7 +216,7 @@ pub async fn run_resume(
                 pad_before_first_cell: true,
                 session_started: None,
                 round_current: current_round,
-                round_total: ITERATE_ROUNDS,
+                round_total: iterate_rounds_u32,
                 session_succeeded_rounds,
             },
         )

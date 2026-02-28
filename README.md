@@ -53,6 +53,9 @@ Replay history for an existing `.codexpotter` project and optionally continue it
 
 ```sh
 codex-potter resume 2026/02/01/1
+
+# Continue in yolo mode (optional)
+codex-potter resume 2026/02/01/1 --yolo
 ```
 
 &ensp;

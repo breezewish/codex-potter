@@ -42,6 +42,7 @@ Options:
 - `--codex-bin <path>`: Path to the `codex` binary to launch in app-server mode.
   - Also configurable via `CODEX_BIN` (defaults to `codex`).
 - `--rounds <n>`: Number of turns to run (default: 10; must be >= 1).
+  - For `resume`, this controls how many additional rounds are run after replay.
 - `--sandbox <mode>`: Sandbox mode to request from Codex per turn.
   - One of: `default` (default), `workspace-write`, `read-only`, `danger-full-access`.
   - `default` matches `codex`'s default behavior: no `--sandbox` flag is passed to the app-server
@@ -58,6 +59,7 @@ codex-potter --rounds 5
 codex-potter --sandbox workspace-write
 codex-potter --yolo
 codex-potter resume 2026/02/01/1
+codex-potter resume 2026/02/01/1 --yolo
 codex-potter --yolo resume .codexpotter/projects/2026/02/01/1
 ```
 
@@ -69,7 +71,8 @@ Replays a previous CodexPotter project (history-only) and then prompts for a fol
 
 At the moment the action picker has a single action:
 
-- `Iterate 10 more rounds`: continue running additional rounds on the same project directory.
+- `Iterate N more rounds`: continue running additional rounds on the same project directory.
+  - `N` is controlled by `--rounds` (default: 10).
 
 `PROJECT_PATH` is resolved to a unique progress file (`.../MAIN.md`) using a small candidate set:
 

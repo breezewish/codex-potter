@@ -55,24 +55,30 @@ impl CliSandbox {
 #[command(author = "Codex", version, about = "Run CodexPotter interactively")]
 struct Cli {
     /// Path to the `codex` CLI binary to launch in app-server mode.
-    #[arg(long, env = "CODEX_BIN", default_value = "codex")]
+    #[arg(long, env = "CODEX_BIN", default_value = "codex", global = true)]
     codex_bin: String,
 
     /// Number of turns to run (each turn starts a fresh `codex app-server`; must be >= 1).
-    #[arg(long, default_value = "10")]
+    ///
+    /// For `resume`, this controls how many additional rounds are run after replay.
+    #[arg(long, default_value = "10", global = true)]
     rounds: NonZeroUsize,
 
     /// Sandbox mode to request from Codex.
     ///
     /// `default` matches codex-cli behavior: no `--sandbox` flag is passed to the app-server and
     /// the sandbox policy is left for Codex to decide.
-    #[arg(long = "sandbox", value_enum, default_value_t)]
+    #[arg(long = "sandbox", value_enum, default_value_t, global = true)]
     sandbox: CliSandbox,
 
     /// Pass Codex's bypass flag when launching `codex app-server`.
     ///
     /// Alias: `--yolo`.
-    #[arg(long = "dangerously-bypass-approvals-and-sandbox", alias = "yolo")]
+    #[arg(
+        long = "dangerously-bypass-approvals-and-sandbox",
+        alias = "yolo",
+        global = true
+    )]
     dangerously_bypass_approvals_and_sandbox: bool,
 
     #[command(subcommand)]
@@ -152,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
             codex_bin.clone(),
             backend_launch,
             codex_compat_home.clone(),
+            cli.rounds,
         )
         .await
         .context("resume project")?;
@@ -377,6 +384,33 @@ mod tests {
     fn yolo_alias_sets_bypass_flag() {
         let cli = Cli::try_parse_from(["codex-potter", "--yolo"]).expect("parse args");
         assert!(cli.dangerously_bypass_approvals_and_sandbox);
+    }
+
+    #[test]
+    fn resume_allows_global_args_after_subcommand() {
+        let cli = Cli::try_parse_from([
+            "codex-potter",
+            "resume",
+            "2026/02/01/1",
+            "--yolo",
+            "--sandbox",
+            "read-only",
+            "--rounds",
+            "3",
+            "--codex-bin",
+            "custom-codex",
+        ])
+        .expect("parse args");
+
+        assert!(cli.dangerously_bypass_approvals_and_sandbox);
+        assert_eq!(cli.sandbox, CliSandbox::ReadOnly);
+        assert_eq!(cli.rounds.get(), 3);
+        assert_eq!(cli.codex_bin, "custom-codex");
+
+        let Some(CliCommand::Resume { project_path }) = cli.command else {
+            panic!("expected resume command, got: {:?}", cli.command);
+        };
+        assert_eq!(project_path, PathBuf::from("2026/02/01/1"));
     }
 
     #[test]
