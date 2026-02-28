@@ -140,15 +140,15 @@ pub async fn run_resume(
             )
             .await?;
 
-        match &exit_info.exit_reason {
-            ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
-            ExitReason::UserRequested => {
-                if !matches!(outcome, PotterRoundOutcome::UserRequested) {
-                    user_cancelled_replay = true;
-                    break;
-                }
+        match replay_round_exit_decision(&exit_info.exit_reason, &outcome) {
+            ReplayRoundExitDecision::Continue => {}
+            ReplayRoundExitDecision::UserCancelled => {
+                user_cancelled_replay = true;
+                break;
             }
-            _ => {}
+            ReplayRoundExitDecision::FatalExitRequested => {
+                return Ok(ResumeExit::FatalExitRequested);
+            }
         }
     }
 
@@ -232,6 +232,31 @@ pub async fn run_resume(
 pub enum ResumeExit {
     Completed,
     FatalExitRequested,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayRoundExitDecision {
+    Continue,
+    UserCancelled,
+    FatalExitRequested,
+}
+
+fn replay_round_exit_decision(
+    exit_reason: &ExitReason,
+    outcome: &PotterRoundOutcome,
+) -> ReplayRoundExitDecision {
+    match exit_reason {
+        ExitReason::Completed => ReplayRoundExitDecision::Continue,
+        ExitReason::TaskFailed(_) => ReplayRoundExitDecision::Continue,
+        ExitReason::Fatal(_) => match outcome {
+            PotterRoundOutcome::Fatal { .. } => ReplayRoundExitDecision::Continue,
+            _ => ReplayRoundExitDecision::FatalExitRequested,
+        },
+        ExitReason::UserRequested => match outcome {
+            PotterRoundOutcome::UserRequested => ReplayRoundExitDecision::Continue,
+            _ => ReplayRoundExitDecision::UserCancelled,
+        },
+    }
 }
 
 fn build_candidate_progress_files(cwd: &Path, project_path: &Path) -> Vec<PathBuf> {
@@ -675,5 +700,25 @@ mod tests {
             panic!("expected agent_message, got: {:?}", events[0]);
         };
         assert_eq!(ev.message, "hello");
+    }
+
+    #[test]
+    fn replay_round_exit_decision_allows_historical_fatal_outcome() {
+        let decision = replay_round_exit_decision(
+            &ExitReason::Fatal("boom".to_string()),
+            &PotterRoundOutcome::Fatal {
+                message: "boom".to_string(),
+            },
+        );
+        assert_eq!(decision, ReplayRoundExitDecision::Continue);
+    }
+
+    #[test]
+    fn replay_round_exit_decision_treats_unexpected_fatal_as_fatal_exit() {
+        let decision = replay_round_exit_decision(
+            &ExitReason::Fatal("backend disconnected".to_string()),
+            &PotterRoundOutcome::Completed,
+        );
+        assert_eq!(decision, ReplayRoundExitDecision::FatalExitRequested);
     }
 }
