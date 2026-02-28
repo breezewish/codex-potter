@@ -12,10 +12,11 @@ Recommended reading order (new contributors):
 6. `config-and-conventions.md` - Where state lives, how model config is resolved, sandbox/approval
    behavior, and how to run tests/snapshots.
 7. `cli.md` - `codex-potter` CLI behavior and multi-round control flow.
-8. `tui-design.md` - Render-only TUI behavior: bottom pane, output folding, token usage indicator,
+8. `resume.md` - `codex-potter resume`: history replay, action picker, and required artifacts.
+9. `tui-design.md` - Render-only TUI behavior: bottom pane, output folding, token usage indicator,
    and status header updates.
-9. `file-search.md` - How `@` file search works (session orchestration + popup insertion).
-10. `tui-chat-composer.md` - Bottom-pane input state machine notes (`ChatComposer`).
+10. `file-search.md` - How `@` file search works (session orchestration + popup insertion).
+11. `tui-chat-composer.md` - Bottom-pane input state machine notes (`ChatComposer`).
 
 ## Documentation conventions
 

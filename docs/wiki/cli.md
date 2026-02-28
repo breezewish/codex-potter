@@ -34,7 +34,7 @@ This is developer-facing documentation. Start at `README.md` for the full code w
 ## CLI interface
 
 ```sh
-codex-potter [OPTIONS]
+codex-potter [OPTIONS] [COMMAND]
 ```
 
 Options:
@@ -57,7 +57,34 @@ codex-potter --codex-bin ./target/debug/codex
 codex-potter --rounds 5
 codex-potter --sandbox workspace-write
 codex-potter --yolo
+codex-potter resume 2026/02/01/1
+codex-potter --yolo resume .codexpotter/projects/2026/02/01/1
 ```
+
+## Commands
+
+### `resume <PROJECT_PATH>`
+
+Replays a previous CodexPotter project (history-only) and then prompts for a follow-up action.
+
+At the moment the action picker has a single action:
+
+- `Iterate 10 more rounds`: continue running additional rounds on the same project directory.
+
+`PROJECT_PATH` is resolved to a unique progress file (`.../MAIN.md`) using a small candidate set:
+
+- If `<PROJECT_PATH>` is an absolute path:
+  - If it is a `MAIN.md` file, it is used as-is.
+  - Otherwise it is treated as a project directory and `/MAIN.md` is appended.
+- If `<PROJECT_PATH>` is a relative path, candidates are:
+  - `<cwd>/.codexpotter/projects/<PROJECT_PATH>/MAIN.md`
+  - `<cwd>/<PROJECT_PATH>/MAIN.md`
+
+The resolver requires exactly one existing file. If no candidates exist it returns an error listing
+the tried paths, and if multiple candidates exist it returns an ambiguity error listing all
+candidates.
+
+See `resume.md` for how replay works and which artifacts are required.
 
 ## Differences vs. `codex exec`
 

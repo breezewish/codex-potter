@@ -65,6 +65,49 @@ The workflow template defines:
   - commit code changes after completing tasks (but never commit `.codexpotter/`)
   - avoid referencing file line numbers in docs
 
+## Potter rollout log (`potter-rollout.jsonl`)
+
+CodexPotter writes an additional append-only JSONL log in each project directory:
+
+- `.codexpotter/projects/YYYY/MM/DD/N/potter-rollout.jsonl`
+
+This file is the durable index that links the project to upstream app-server rollouts and captures
+Potter-specific session/round boundary events. It is used by `codex-potter resume` to replay
+history and to continue iterating on the same project.
+
+The log is intentionally minimal: it does **not** duplicate upstream rollout content. Instead, it
+records `(thread_id, rollout_path)` for each round and relies on the upstream `rollout-*.jsonl` as
+the source of truth for persisted `EventMsg` items.
+
+### Format
+
+Each line is a single JSON object (append-only). The schema is a tagged enum with `type`:
+
+- `session_started`
+  - `user_message` (optional): the original user prompt text (stored verbatim for replay).
+  - `user_prompt_file`: the progress file path captured at session start.
+- `round_started`
+  - `current`: 1-based round counter shown in the UI.
+  - `total`: round budget shown in the UI for that session segment.
+- `round_configured`
+  - `thread_id`: upstream app-server session/thread id.
+  - `rollout_path`: path to the upstream rollout file (recorded as an absolute path when possible).
+  - `rollout_path_raw` / `rollout_base_dir` (optional): debugging fields populated when path
+    canonicalization fails.
+- `session_succeeded`
+  - `rounds`: number of rounds recorded for the overall project (used for summary rendering).
+  - `duration_secs`: wall-clock elapsed time for the project.
+  - `user_prompt_file`: progress file path.
+  - `git_commit_start` / `git_commit_end`: git commit SHAs captured for the summary.
+- `round_finished`
+  - `outcome`: `completed` | `user_requested` | `task_failed` | `fatal` (payload matches the
+    `PotterRoundOutcome` schema in `codex-protocol`).
+
+### Compatibility
+
+Projects created before `potter-rollout.jsonl` was introduced cannot currently be resumed; `resume`
+fails fast with an "unsupported project" error.
+
 ## Knowledge base (gitignored scratch directory)
 
 ### Purpose
