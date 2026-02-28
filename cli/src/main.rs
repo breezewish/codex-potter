@@ -52,11 +52,7 @@ impl CliSandbox {
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    author = "Codex",
-    version,
-    about = "Run a multi-round Codex workflow using legacy TUI formatting via app-server"
-)]
+#[command(author = "Codex", version, about = "Run CodexPotter interactively")]
 struct Cli {
     /// Path to the `codex` CLI binary to launch in app-server mode.
     #[arg(long, env = "CODEX_BIN", default_value = "codex")]
