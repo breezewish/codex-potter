@@ -149,9 +149,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(project_path) = resume_project_path {
-        let _resolved = crate::resume::resolve_project_paths(&workdir, &project_path)
-            .context("resolve PROJECT_PATH for resume")?;
-        anyhow::bail!("resume is not implemented yet");
+        crate::resume::run_resume(&mut ui, &workdir, &project_path)
+            .await
+            .context("resume project")?;
+        return Ok(());
     }
 
     let Some(user_prompt) = ui.prompt_user().await? else {
