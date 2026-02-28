@@ -6,10 +6,12 @@ mod config;
 mod global_gitignore;
 mod path_utils;
 mod potter_rollout;
+mod potter_rollout_resume_index;
 mod potter_stream_recovery;
 mod project;
 mod prompt_queue;
 mod resume;
+mod resume_picker_index;
 mod round_runner;
 mod startup;
 
@@ -89,8 +91,8 @@ struct Cli {
 enum CliCommand {
     /// Resume a CodexPotter project (replay history and optionally continue iterating).
     Resume {
-        /// Project path to resolve to a unique `MAIN.md`.
-        project_path: PathBuf,
+        /// Project path to resolve to a unique `MAIN.md`. If omitted, open a picker UI.
+        project_path: Option<PathBuf>,
     },
 }
 
@@ -106,10 +108,6 @@ async fn main() -> anyhow::Result<()> {
     let cli = parse_cli();
     let bypass = cli.dangerously_bypass_approvals_and_sandbox;
     let sandbox = cli.sandbox;
-    let resume_project_path = cli
-        .command
-        .as_ref()
-        .map(|CliCommand::Resume { project_path }| project_path.clone());
 
     let check_for_update_on_startup = crate::config::ConfigStore::new_default()
         .and_then(|store| store.check_for_update_on_startup())
@@ -150,25 +148,40 @@ async fn main() -> anyhow::Result<()> {
         maybe_prompt_global_gitignore(&mut ui, &workdir, plan).await;
     }
 
-    if let Some(project_path) = resume_project_path {
-        let resume_exit = crate::resume::run_resume(
-            &mut ui,
-            &workdir,
-            &project_path,
-            codex_bin.clone(),
-            backend_launch,
-            codex_compat_home.clone(),
-            cli.rounds,
-        )
-        .await
-        .context("resume project")?;
-        if resume_exit == crate::resume::ResumeExit::FatalExitRequested {
-            // `std::process::exit` skips destructors, so explicitly drop the UI to restore terminal
-            // state before exiting.
-            drop(ui);
-            std::process::exit(1);
+    if let Some(CliCommand::Resume { project_path }) = cli.command.as_ref() {
+        let project_path = match project_path {
+            Some(project_path) => Some(project_path.clone()),
+            None => {
+                let rows = crate::resume_picker_index::discover_resumable_projects(&workdir)
+                    .context("discover resumable projects")?;
+                match ui.prompt_resume_picker(rows).await? {
+                    codex_tui::ResumePickerOutcome::StartFresh => None,
+                    codex_tui::ResumePickerOutcome::Resume(project_path) => Some(project_path),
+                    codex_tui::ResumePickerOutcome::Exit => return Ok(()),
+                }
+            }
+        };
+
+        if let Some(project_path) = project_path {
+            let resume_exit = crate::resume::run_resume(
+                &mut ui,
+                &workdir,
+                &project_path,
+                codex_bin.clone(),
+                backend_launch,
+                codex_compat_home.clone(),
+                cli.rounds,
+            )
+            .await
+            .context("resume project")?;
+            if resume_exit == crate::resume::ResumeExit::FatalExitRequested {
+                // `std::process::exit` skips destructors, so explicitly drop the UI to restore terminal
+                // state before exiting.
+                drop(ui);
+                std::process::exit(1);
+            }
+            return Ok(());
         }
-        return Ok(());
     }
 
     let Some(user_prompt) = ui.prompt_user().await? else {
@@ -410,7 +423,7 @@ mod tests {
         let Some(CliCommand::Resume { project_path }) = cli.command else {
             panic!("expected resume command, got: {:?}", cli.command);
         };
-        assert_eq!(project_path, PathBuf::from("2026/02/01/1"));
+        assert_eq!(project_path, Some(PathBuf::from("2026/02/01/1")));
     }
 
     #[test]
@@ -421,6 +434,16 @@ mod tests {
         let Some(CliCommand::Resume { project_path }) = cli.command else {
             panic!("expected resume command, got: {:?}", cli.command);
         };
-        assert_eq!(project_path, PathBuf::from("2026/02/01/1"));
+        assert_eq!(project_path, Some(PathBuf::from("2026/02/01/1")));
+    }
+
+    #[test]
+    fn resume_subcommand_parses_without_project_path() {
+        let cli = Cli::try_parse_from(["codex-potter", "resume"]).expect("parse args");
+
+        let Some(CliCommand::Resume { project_path }) = cli.command else {
+            panic!("expected resume command, got: {:?}", cli.command);
+        };
+        assert_eq!(project_path, None);
     }
 }

@@ -29,6 +29,7 @@ mod markdown_stream;
 mod potter_tui;
 mod prompt_history_store;
 mod render;
+mod resume_picker_prompt;
 mod shimmer;
 mod skills_discovery;
 mod startup_banner;
@@ -56,6 +57,8 @@ pub use exit::ExitReason;
 pub use global_gitignore_prompt::GlobalGitignorePromptOutcome;
 pub use global_gitignore_prompt::run_global_gitignore_prompt;
 pub use potter_tui::CodexPotterTui;
+pub use resume_picker_prompt::ResumePickerOutcome;
+pub use resume_picker_prompt::ResumePickerRow;
 pub use update_action::UpdateAction;
 pub use version::CODEX_POTTER_VERSION;
 

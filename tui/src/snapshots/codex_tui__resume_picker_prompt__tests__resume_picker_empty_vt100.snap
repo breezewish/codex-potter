@@ -1,0 +1,13 @@
+---
+source: tui/src/resume_picker_prompt.rs
+expression: terminal.backend().vt100().screen().contents()
+---
+Resume a previous session
+Type to search
+  Updated  Branch  User Request
+No sessions yet
+
+
+
+
+enter to resume     esc to start new     ctrl + c to quit     ↑/↓ to browse

@@ -124,6 +124,25 @@ impl CodexPotterTui {
         result
     }
 
+    /// Prompt the user to select a resumable CodexPotter project to resume.
+    ///
+    /// `Esc` returns [`crate::ResumePickerOutcome::StartFresh`] (do not exit the app).
+    /// `Ctrl+C` returns [`crate::ResumePickerOutcome::Exit`].
+    pub async fn prompt_resume_picker(
+        &mut self,
+        rows: Vec<crate::ResumePickerRow>,
+    ) -> anyhow::Result<crate::ResumePickerOutcome> {
+        let result =
+            crate::resume_picker_prompt::run_resume_picker_prompt_with_tui(&mut self.tui, rows)
+                .await;
+
+        self.tui.pause_events();
+        tui::flush_terminal_input_buffer();
+        self.tui.resume_events();
+
+        result
+    }
+
     /// Clear current screen contents (used to remove composer remnants).
     pub fn clear(&mut self) -> anyhow::Result<()> {
         self.tui.terminal.clear()?;

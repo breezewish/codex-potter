@@ -116,6 +116,26 @@ pub fn progress_file_git_commit_start(
     Ok(front_matter_string(&contents, "git_commit").unwrap_or_default())
 }
 
+/// Return the `short_title` value recorded in the progress file front matter.
+pub fn progress_file_short_title(progress_file: &Path) -> anyhow::Result<Option<String>> {
+    read_progress_file_front_matter_string(progress_file, "short_title")
+}
+
+/// Return the `git_branch` value recorded in the progress file front matter.
+pub fn progress_file_git_branch(progress_file: &Path) -> anyhow::Result<Option<String>> {
+    read_progress_file_front_matter_string(progress_file, "git_branch")
+}
+
+fn read_progress_file_front_matter_string(
+    progress_file: &Path,
+    key: &str,
+) -> anyhow::Result<Option<String>> {
+    let contents = std::fs::read_to_string(progress_file)
+        .with_context(|| format!("read {}", progress_file.display()))?;
+    let value = front_matter_string(&contents, key).map(|value| value.trim().to_string());
+    Ok(value.and_then(|value| if value.is_empty() { None } else { Some(value) }))
+}
+
 fn create_next_project_dir(
     projects_root: &Path,
     year: &str,
@@ -198,13 +218,45 @@ fn front_matter_string(contents: &str, key: &str) -> Option<String> {
             continue;
         }
 
-        let raw = v.trim();
-        let first_token = raw.split_whitespace().next().unwrap_or_default();
-        let unquoted = first_token.trim_matches(&['"', '\''][..]);
-        return Some(unquoted.to_string());
+        let raw = v.trim_start();
+        let value = strip_yaml_inline_comment(raw).trim();
+        return Some(unquote_yaml_scalar(value));
     }
 
     None
+}
+
+fn strip_yaml_inline_comment(raw: &str) -> &str {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut prev_was_whitespace = true;
+
+    for (idx, ch) in raw.char_indices() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '#' if !in_single && !in_double && prev_was_whitespace => return raw[..idx].trim_end(),
+            _ => {}
+        }
+
+        prev_was_whitespace = ch.is_whitespace();
+    }
+
+    raw.trim_end()
+}
+
+fn unquote_yaml_scalar(raw: &str) -> String {
+    let raw = raw.trim();
+    let bytes = raw.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        return raw[1..raw.len() - 1]
+            .replace("\\\\", "\\")
+            .replace("\\\"", "\"");
+    }
+    if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
+        return raw[1..raw.len() - 1].replace("''", "'");
+    }
+    raw.to_string()
 }
 
 fn set_front_matter_bool(contents: &str, key: &str, value: bool) -> anyhow::Result<String> {
@@ -383,6 +435,30 @@ mod tests {
 
         let got = progress_file_git_commit_start(workdir, &rel).expect("read git_commit");
         assert_eq!(got, "abc123");
+    }
+
+    #[test]
+    fn progress_file_short_title_reads_multi_word_front_matter_value() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let progress = temp.path().join("MAIN.md");
+        std::fs::write(
+            &progress,
+            r#"---
+status: open
+short_title: Fix resume picker search
+git_branch: main
+---
+
+# Overall Goal
+"#,
+        )
+        .expect("write progress file");
+
+        let short_title = progress_file_short_title(&progress).expect("read short_title");
+        assert_eq!(short_title, Some("Fix resume picker search".to_string()));
+
+        let git_branch = progress_file_git_branch(&progress).expect("read git_branch");
+        assert_eq!(git_branch, Some("main".to_string()));
     }
 
     #[test]

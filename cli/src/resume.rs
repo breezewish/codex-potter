@@ -495,152 +495,69 @@ fn build_round_replay_plans(
     project: &ResolvedProjectPaths,
     potter_rollout_lines: &[crate::potter_rollout::PotterRolloutLine],
 ) -> anyhow::Result<ResumeReplayPlans> {
-    let mut session_started: Option<(Option<String>, PathBuf)> = None;
+    let index = crate::potter_rollout_resume_index::build_resume_index(potter_rollout_lines)?;
+
+    let mut session_started = Some(index.session_started);
     let mut rounds = Vec::new();
 
-    struct RoundBuilder {
-        started: (u32, u32),
-        configured: Option<(codex_protocol::ThreadId, PathBuf)>,
-        session_succeeded: Option<crate::potter_rollout::PotterRolloutLine>,
-    }
-
-    let mut current: Option<RoundBuilder> = None;
-
-    for line in potter_rollout_lines {
-        match line {
-            crate::potter_rollout::PotterRolloutLine::SessionStarted {
-                user_message,
-                user_prompt_file,
-            } => {
-                if session_started.is_some() || !rounds.is_empty() || current.is_some() {
-                    anyhow::bail!("potter-rollout: session_started must appear once at the top");
-                }
-                session_started = Some((user_message.clone(), user_prompt_file.clone()));
-            }
-            crate::potter_rollout::PotterRolloutLine::RoundStarted {
-                current: round_current,
-                total,
-            } => {
-                if current.is_some() {
-                    anyhow::bail!("potter-rollout: round_started before previous round_finished");
-                }
-                current = Some(RoundBuilder {
-                    started: (*round_current, *total),
-                    configured: None,
-                    session_succeeded: None,
-                });
-            }
-            crate::potter_rollout::PotterRolloutLine::RoundConfigured {
-                thread_id,
-                rollout_path,
-                ..
-            } => {
-                let Some(builder) = current.as_mut() else {
-                    anyhow::bail!("potter-rollout: round_configured before round_started");
-                };
-                if builder.configured.is_some() {
-                    anyhow::bail!("potter-rollout: duplicate round_configured in a single round");
-                }
-                builder.configured = Some((*thread_id, rollout_path.clone()));
-            }
-            crate::potter_rollout::PotterRolloutLine::SessionSucceeded { .. } => {
-                let Some(builder) = current.as_mut() else {
-                    anyhow::bail!("potter-rollout: session_succeeded outside a round");
-                };
-                if builder.session_succeeded.is_some() {
-                    anyhow::bail!("potter-rollout: duplicate session_succeeded in a single round");
-                }
-                builder.session_succeeded = Some(line.clone());
-            }
-            crate::potter_rollout::PotterRolloutLine::RoundFinished { outcome } => {
-                let Some(builder) = current.take() else {
-                    anyhow::bail!("potter-rollout: round_finished without round_started");
-                };
-                let Some((thread_id, rollout_path)) = builder.configured else {
-                    anyhow::bail!("potter-rollout: round_finished without round_configured");
-                };
-
-                let mut events = Vec::new();
-                if rounds.is_empty() {
-                    let Some((user_message, user_prompt_file)) = session_started.take() else {
-                        anyhow::bail!("potter-rollout: missing session_started before first round");
-                    };
-                    events.push(EventMsg::PotterSessionStarted {
-                        user_message,
-                        working_dir: project.workdir.clone(),
-                        project_dir: project.project_dir.clone(),
-                        user_prompt_file,
-                    });
-                }
-
-                events.push(EventMsg::PotterRoundStarted {
-                    current: builder.started.0,
-                    total: builder.started.1,
-                });
-
-                let rollout_path = resolve_rollout_path_for_replay(project, &rollout_path);
-                if let Some(cfg) =
-                    synthesize_session_configured_event(thread_id, rollout_path.clone())?
-                {
-                    events.push(EventMsg::SessionConfigured(cfg));
-                }
-
-                let mut rollout_events = read_upstream_rollout_event_msgs(&rollout_path)
-                    .with_context(|| format!("replay rollout {}", rollout_path.display()))?;
-                events.append(&mut rollout_events);
-
-                if let Some(crate::potter_rollout::PotterRolloutLine::SessionSucceeded {
-                    rounds,
-                    duration_secs,
-                    user_prompt_file,
-                    git_commit_start,
-                    git_commit_end,
-                }) = builder.session_succeeded
-                {
-                    events.push(EventMsg::PotterSessionSucceeded {
-                        rounds,
-                        duration: std::time::Duration::from_secs(duration_secs),
-                        user_prompt_file,
-                        git_commit_start,
-                        git_commit_end,
-                    });
-                }
-
-                events.push(EventMsg::PotterRoundFinished {
-                    outcome: outcome.clone(),
-                });
-
-                rounds.push(RoundReplayPlan {
-                    events,
-                    outcome: outcome.clone(),
-                });
-            }
+    for round in index.completed_rounds {
+        let mut events = Vec::new();
+        if rounds.is_empty() {
+            let started = session_started
+                .take()
+                .context("potter-rollout: missing session_started before first round")?;
+            events.push(EventMsg::PotterSessionStarted {
+                user_message: started.user_message,
+                working_dir: project.workdir.clone(),
+                project_dir: project.project_dir.clone(),
+                user_prompt_file: started.user_prompt_file,
+            });
         }
-    }
 
-    let has_session_started = session_started.is_some();
-    let unfinished_round = match current.take() {
-        Some(builder) => {
-            if builder.session_succeeded.is_some() {
-                anyhow::bail!("potter-rollout: session_succeeded without round_finished at EOF");
-            }
-            let Some((thread_id, rollout_path)) = builder.configured else {
-                anyhow::bail!("potter-rollout: missing round_configured at EOF");
-            };
-            Some(UnfinishedRoundPlan {
-                round_current: builder.started.0,
-                round_total: builder.started.1,
-                thread_id,
-                rollout_path: resolve_rollout_path_for_replay(project, &rollout_path),
-                session_started,
-            })
+        events.push(EventMsg::PotterRoundStarted {
+            current: round.round_current,
+            total: round.round_total,
+        });
+
+        let rollout_path = resolve_rollout_path_for_replay(project, &round.rollout_path);
+        if let Some(cfg) =
+            synthesize_session_configured_event(round.thread_id, rollout_path.clone())?
+        {
+            events.push(EventMsg::SessionConfigured(cfg));
         }
-        None => None,
-    };
 
-    if has_session_started && rounds.is_empty() && unfinished_round.is_none() {
-        anyhow::bail!("potter-rollout: session_started present but no rounds found");
+        let mut rollout_events = read_upstream_rollout_event_msgs(&rollout_path)
+            .with_context(|| format!("replay rollout {}", rollout_path.display()))?;
+        events.append(&mut rollout_events);
+
+        if let Some(session_succeeded) = round.session_succeeded {
+            events.push(EventMsg::PotterSessionSucceeded {
+                rounds: session_succeeded.rounds,
+                duration: std::time::Duration::from_secs(session_succeeded.duration_secs),
+                user_prompt_file: session_succeeded.user_prompt_file,
+                git_commit_start: session_succeeded.git_commit_start,
+                git_commit_end: session_succeeded.git_commit_end,
+            });
+        }
+
+        events.push(EventMsg::PotterRoundFinished {
+            outcome: round.outcome.clone(),
+        });
+
+        rounds.push(RoundReplayPlan {
+            events,
+            outcome: round.outcome,
+        });
     }
+
+    let unfinished_round = index.unfinished_round.map(|round| UnfinishedRoundPlan {
+        round_current: round.round_current,
+        round_total: round.round_total,
+        thread_id: round.thread_id,
+        rollout_path: resolve_rollout_path_for_replay(project, &round.rollout_path),
+        session_started: session_started
+            .map(|started| (started.user_message, started.user_prompt_file)),
+    });
 
     Ok(ResumeReplayPlans {
         completed_rounds: rounds,
@@ -1035,10 +952,16 @@ mod tests {
         let resolved =
             resolve_project_paths(temp.path(), Path::new("2026/02/01/1")).expect("resolve");
 
-        let potter_rollout_lines = vec![crate::potter_rollout::PotterRolloutLine::RoundStarted {
-            current: 1,
-            total: 10,
-        }];
+        let potter_rollout_lines = vec![
+            crate::potter_rollout::PotterRolloutLine::SessionStarted {
+                user_message: Some("hello".to_string()),
+                user_prompt_file: PathBuf::from(".codexpotter/projects/2026/02/01/1/MAIN.md"),
+            },
+            crate::potter_rollout::PotterRolloutLine::RoundStarted {
+                current: 1,
+                total: 10,
+            },
+        ];
 
         let err =
             build_round_replay_plans(&resolved, &potter_rollout_lines).expect_err("expected error");
