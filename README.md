@@ -52,11 +52,17 @@ codex-potter --yolo
 Replay history for an existing `.codexpotter` project and optionally continue iterating:
 
 ```sh
+# Open the resume picker (no path)
+codex-potter resume
+
+# Or resume directly by project path
 codex-potter resume 2026/02/01/1
 
 # Continue in yolo mode (optional)
 codex-potter resume 2026/02/01/1 --yolo
 ```
+
+In the picker: `enter` to resume, `esc` to start new, `ctrl + c` to quit.
 
 &ensp;
 

@@ -1,3 +1,11 @@
+//! Resume picker prompt.
+//!
+//! # Divergence from upstream Codex TUI
+//!
+//! - The final column is `User Request` (CodexPotter project prompt/title) instead of upstream
+//!   `Conversation`.
+//! - The picker operates on an in-memory list provided by the CLI (no pagination / fork action).
+
 use std::path::PathBuf;
 use std::time::SystemTime;
 

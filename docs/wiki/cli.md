@@ -58,6 +58,7 @@ codex-potter --codex-bin ./target/debug/codex
 codex-potter --rounds 5
 codex-potter --sandbox workspace-write
 codex-potter --yolo
+codex-potter resume
 codex-potter resume 2026/02/01/1
 codex-potter resume 2026/02/01/1 --yolo
 codex-potter --yolo resume .codexpotter/projects/2026/02/01/1
@@ -65,16 +66,24 @@ codex-potter --yolo resume .codexpotter/projects/2026/02/01/1
 
 ## Commands
 
-### `resume <PROJECT_PATH>`
+### `resume [PROJECT_PATH]`
 
 Replays a previous CodexPotter project (history-only) and then prompts for a follow-up action.
+
+When `PROJECT_PATH` is omitted, `codex-potter` opens a full-screen picker UI listing resumable
+projects under `<cwd>/.codexpotter/projects`:
+
+- `Enter`: resume the selected project
+- `Esc`: start new (proceed into the normal interactive prompt flow)
+- `Ctrl+C`: quit
 
 At the moment the action picker has a single action:
 
 - `Iterate N more rounds`: continue running additional rounds on the same project directory.
   - `N` is controlled by `--rounds` (default: 10).
 
-`PROJECT_PATH` is resolved to a unique progress file (`.../MAIN.md`) using a small candidate set:
+When `PROJECT_PATH` is provided, it is resolved to a unique progress file (`.../MAIN.md`) using a
+small candidate set:
 
 - If `<PROJECT_PATH>` is an absolute path:
   - If it is a `MAIN.md` file, it is used as-is.

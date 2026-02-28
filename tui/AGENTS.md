@@ -51,6 +51,7 @@ Behavior related
 
 - A customized banner on startup
 - Additionally shows gitignore startup hint
+- Resume picker UI exists for `codex-potter resume` (no path); it uses a `User Request` column (CodexPotter projects) instead of upstream `Conversation`.
 - Auto retry on errors (successful recoveries are transient-only; unrecoverable errors are surfaced).
 - Customized update notification / self-update (and on-disk state under `~/.codexpotter/`).
 - No desktop notifications when the terminal is unfocused.
@@ -58,7 +59,7 @@ Behavior related
 Engineering related:
 
 - Unneeded logics and codes in codex TUI are intentionally removed to keep code tidy and focus (codex-potter's TUI is a _subset_ of codex's TUI):
-  - /command picker, `?` shortcuts overlay, /model selection, /resume selection
+  - /command picker, `?` shortcuts overlay, /model selection
   - Rewind (esc)
   - Approval flows
   - Other interactive features not needed

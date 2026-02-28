@@ -1,6 +1,6 @@
 # Resume (`codex-potter resume`)
 
-`codex-potter resume <PROJECT_PATH>` replays a previous CodexPotter project's history and then
+`codex-potter resume [PROJECT_PATH]` replays a previous CodexPotter project's history and then
 prompts for a follow-up action (currently: **Iterate N more rounds**, where `N` is `--rounds`
 (default: 10)).
 
@@ -16,11 +16,14 @@ The implementation is intentionally conservative:
 ## CLI usage
 
 ```sh
-codex-potter resume <PROJECT_PATH>
+codex-potter resume [PROJECT_PATH]
 ```
 
-`PROJECT_PATH` is resolved to a unique progress file (`.../MAIN.md`). See `cli.md` for the full
-resolution algorithm.
+When `PROJECT_PATH` is omitted, CodexPotter opens a picker UI listing resumable projects under
+`<cwd>/.codexpotter/projects` (press `Esc` to start new, `Ctrl+C` to quit).
+
+When `PROJECT_PATH` is provided, it is resolved to a unique progress file (`.../MAIN.md`). See
+`cli.md` for the full resolution algorithm.
 
 ## Required artifacts
 
