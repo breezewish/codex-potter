@@ -9,8 +9,10 @@ mod potter_stream_recovery;
 mod potter_rollout;
 mod project;
 mod prompt_queue;
+mod resume;
 mod startup;
 
+use std::path::PathBuf;
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
@@ -19,6 +21,7 @@ use chrono::Local;
 use clap::CommandFactory;
 use clap::FromArgMatches;
 use clap::Parser;
+use clap::Subcommand;
 use clap::ValueEnum;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -78,6 +81,18 @@ struct Cli {
     /// Alias: `--yolo`.
     #[arg(long = "dangerously-bypass-approvals-and-sandbox", alias = "yolo")]
     dangerously_bypass_approvals_and_sandbox: bool,
+
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+enum CliCommand {
+    /// Resume a CodexPotter project (replay history and optionally continue iterating).
+    Resume {
+        /// Project path to resolve to a unique `MAIN.md`.
+        project_path: PathBuf,
+    },
 }
 
 fn parse_cli() -> Cli {
@@ -92,6 +107,10 @@ async fn main() -> anyhow::Result<()> {
     let cli = parse_cli();
     let bypass = cli.dangerously_bypass_approvals_and_sandbox;
     let sandbox = cli.sandbox;
+    let resume_project_path = match &cli.command {
+        Some(CliCommand::Resume { project_path }) => Some(project_path.clone()),
+        None => None,
+    };
 
     let check_for_update_on_startup = crate::config::ConfigStore::new_default()
         .and_then(|store| store.check_for_update_on_startup())
@@ -128,6 +147,13 @@ async fn main() -> anyhow::Result<()> {
     if let Some(plan) = global_gitignore_prompt_plan {
         maybe_prompt_global_gitignore(&mut ui, &workdir, plan).await;
     }
+
+    if let Some(project_path) = resume_project_path {
+        let _resolved = crate::resume::resolve_project_paths(&workdir, &project_path)
+            .context("resolve PROJECT_PATH for resume")?;
+        anyhow::bail!("resume is not implemented yet");
+    }
+
     let Some(user_prompt) = ui.prompt_user().await? else {
         return Ok(());
     };
@@ -491,5 +517,16 @@ mod tests {
     fn yolo_alias_sets_bypass_flag() {
         let cli = Cli::try_parse_from(["codex-potter", "--yolo"]).expect("parse args");
         assert!(cli.dangerously_bypass_approvals_and_sandbox);
+    }
+
+    #[test]
+    fn resume_subcommand_parses_project_path() {
+        let cli = Cli::try_parse_from(["codex-potter", "resume", "2026/02/01/1"])
+            .expect("parse args");
+
+        let Some(CliCommand::Resume { project_path }) = cli.command else {
+            panic!("expected resume command, got: {:?}", cli.command);
+        };
+        assert_eq!(project_path, PathBuf::from("2026/02/01/1"));
     }
 }
