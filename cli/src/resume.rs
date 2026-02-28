@@ -103,11 +103,7 @@ pub async fn run_resume(
         .context("derive progress file relative path")?
         .to_path_buf();
     let potter_rollout_path = crate::potter_rollout::potter_rollout_path(&resolved.project_dir);
-    let potter_rollout_lines = crate::potter_rollout::read_lines(&potter_rollout_path)
-        .with_context(|| format!("read {}", potter_rollout_path.display()))?;
-    if potter_rollout_lines.is_empty() {
-        anyhow::bail!("potter-rollout is empty: {}", potter_rollout_path.display());
-    }
+    let potter_rollout_lines = load_potter_rollout_lines(&potter_rollout_path)?;
 
     let round_plans = build_round_replay_plans(&resolved, &potter_rollout_lines)?;
 
@@ -239,6 +235,31 @@ enum ReplayRoundExitDecision {
     Continue,
     UserCancelled,
     FatalExitRequested,
+}
+
+fn load_potter_rollout_lines(
+    potter_rollout_path: &Path,
+) -> anyhow::Result<Vec<crate::potter_rollout::PotterRolloutLine>> {
+    if !potter_rollout_path.exists() {
+        anyhow::bail!(
+            "unsupported project: missing {}",
+            potter_rollout_path.display()
+        );
+    }
+    if !potter_rollout_path.is_file() {
+        anyhow::bail!(
+            "unsupported project: expected a file at {}",
+            potter_rollout_path.display()
+        );
+    }
+
+    let lines = crate::potter_rollout::read_lines(potter_rollout_path)
+        .with_context(|| format!("read {}", potter_rollout_path.display()))?;
+    if lines.is_empty() {
+        anyhow::bail!("potter-rollout is empty: {}", potter_rollout_path.display());
+    }
+
+    Ok(lines)
 }
 
 fn replay_round_exit_decision(
@@ -720,5 +741,19 @@ mod tests {
             &PotterRoundOutcome::Completed,
         );
         assert_eq!(decision, ReplayRoundExitDecision::FatalExitRequested);
+    }
+
+    #[test]
+    fn load_potter_rollout_lines_errors_when_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("potter-rollout.jsonl");
+
+        let err = load_potter_rollout_lines(&path).expect_err("expected missing error");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("unsupported project: missing"),
+            "unexpected error: {message}"
+        );
+        assert!(message.contains("potter-rollout.jsonl"));
     }
 }
