@@ -3,8 +3,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use codex_protocol::protocol::PotterRoundOutcome;
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::PotterRoundOutcome;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -54,7 +54,10 @@ pub fn potter_rollout_path(project_dir: &Path) -> PathBuf {
 /// abort rather than silently diverging from the persisted replay source of truth.
 pub fn append_line(path: &Path, line: &PotterRolloutLine) -> anyhow::Result<()> {
     let Some(parent) = path.parent() else {
-        anyhow::bail!("invalid potter-rollout path (no parent): {}", path.display());
+        anyhow::bail!(
+            "invalid potter-rollout path (no parent): {}",
+            path.display()
+        );
     };
     std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
 
@@ -70,20 +73,21 @@ pub fn append_line(path: &Path, line: &PotterRolloutLine) -> anyhow::Result<()> 
 
     file.write_all(json.as_bytes())
         .with_context(|| format!("write {}", path.display()))?;
-    file.flush().with_context(|| format!("flush {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("flush {}", path.display()))?;
     Ok(())
 }
 
 /// Read and parse the entire `potter-rollout.jsonl` file.
 pub fn read_lines(path: &Path) -> anyhow::Result<Vec<PotterRolloutLine>> {
-    let file =
-        std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let reader = std::io::BufReader::new(file);
 
     let mut out = Vec::new();
     for (idx, line) in std::io::BufRead::lines(reader).enumerate() {
         let line_number = idx + 1;
-        let line = line.with_context(|| format!("read line {line_number} from {}", path.display()))?;
+        let line =
+            line.with_context(|| format!("read line {line_number} from {}", path.display()))?;
         if line.trim().is_empty() {
             anyhow::bail!("empty JSONL line {line_number} in {}", path.display());
         }

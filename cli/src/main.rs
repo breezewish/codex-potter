@@ -5,15 +5,15 @@ mod codex_compat;
 mod config;
 mod global_gitignore;
 mod path_utils;
-mod potter_stream_recovery;
 mod potter_rollout;
+mod potter_stream_recovery;
 mod project;
 mod prompt_queue;
 mod resume;
 mod startup;
 
-use std::path::PathBuf;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::Context;
@@ -107,10 +107,10 @@ async fn main() -> anyhow::Result<()> {
     let cli = parse_cli();
     let bypass = cli.dangerously_bypass_approvals_and_sandbox;
     let sandbox = cli.sandbox;
-    let resume_project_path = match &cli.command {
-        Some(CliCommand::Resume { project_path }) => Some(project_path.clone()),
-        None => None,
-    };
+    let resume_project_path = cli
+        .command
+        .as_ref()
+        .map(|CliCommand::Resume { project_path }| project_path.clone());
 
     let check_for_update_on_startup = crate::config::ConfigStore::new_default()
         .and_then(|store| store.check_for_update_on_startup())
@@ -253,29 +253,29 @@ async fn main() -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     let mut has_recorded_round_configured = false;
                     while let Some(event) = backend_event_rx.recv().await {
-                        if !has_recorded_round_configured {
-                            if let EventMsg::SessionConfigured(cfg) = &event.msg {
-                                has_recorded_round_configured = true;
-                                let (rollout_path, rollout_path_raw, rollout_base_dir) =
-                                    crate::potter_rollout::resolve_rollout_path_for_recording(
-                                        cfg.rollout_path.clone(),
-                                        &workdir,
-                                    );
-                                if let Err(err) = crate::potter_rollout::append_line(
-                                    &potter_rollout_path,
-                                    &crate::potter_rollout::PotterRolloutLine::RoundConfigured {
-                                        thread_id: cfg.session_id,
-                                        rollout_path,
-                                        rollout_path_raw,
-                                        rollout_base_dir,
-                                    },
-                                ) {
-                                    let _ = fatal_exit_tx.send(format!(
-                                        "failed to write {}: {err:#}",
-                                        potter_rollout_path.display()
-                                    ));
-                                    break;
-                                }
+                        if !has_recorded_round_configured
+                            && let EventMsg::SessionConfigured(cfg) = &event.msg
+                        {
+                            has_recorded_round_configured = true;
+                            let (rollout_path, rollout_path_raw, rollout_base_dir) =
+                                crate::potter_rollout::resolve_rollout_path_for_recording(
+                                    cfg.rollout_path.clone(),
+                                    &workdir,
+                                );
+                            if let Err(err) = crate::potter_rollout::append_line(
+                                &potter_rollout_path,
+                                &crate::potter_rollout::PotterRolloutLine::RoundConfigured {
+                                    thread_id: cfg.session_id,
+                                    rollout_path,
+                                    rollout_path_raw,
+                                    rollout_base_dir,
+                                },
+                            ) {
+                                let _ = fatal_exit_tx.send(format!(
+                                    "failed to write {}: {err:#}",
+                                    potter_rollout_path.display()
+                                ));
+                                break;
                             }
                         }
 
@@ -318,19 +318,19 @@ async fn main() -> anyhow::Result<()> {
                             });
                         }
 
-                        if let EventMsg::PotterRoundFinished { outcome } = &event.msg {
-                            if let Err(err) = crate::potter_rollout::append_line(
+                        if let EventMsg::PotterRoundFinished { outcome } = &event.msg
+                            && let Err(err) = crate::potter_rollout::append_line(
                                 &potter_rollout_path,
                                 &crate::potter_rollout::PotterRolloutLine::RoundFinished {
                                     outcome: outcome.clone(),
                                 },
-                            ) {
-                                let _ = fatal_exit_tx.send(format!(
-                                    "failed to write {}: {err:#}",
-                                    potter_rollout_path.display()
-                                ));
-                                break;
-                            }
+                            )
+                        {
+                            let _ = fatal_exit_tx.send(format!(
+                                "failed to write {}: {err:#}",
+                                potter_rollout_path.display()
+                            ));
+                            break;
                         }
 
                         if ui_event_tx.send(event).is_err() {
@@ -522,8 +522,8 @@ mod tests {
 
     #[test]
     fn resume_subcommand_parses_project_path() {
-        let cli = Cli::try_parse_from(["codex-potter", "resume", "2026/02/01/1"])
-            .expect("parse args");
+        let cli =
+            Cli::try_parse_from(["codex-potter", "resume", "2026/02/01/1"]).expect("parse args");
 
         let Some(CliCommand::Resume { project_path }) = cli.command else {
             panic!("expected resume command, got: {:?}", cli.command);

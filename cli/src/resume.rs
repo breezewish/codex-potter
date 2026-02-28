@@ -29,7 +29,10 @@ pub struct ResolvedProjectPaths {
 /// - `.codexpotter/projects/2026/02/01/1`
 /// - `/abs/path/to/.codexpotter/projects/2026/02/01/1`
 /// - any of the above with `/MAIN.md` suffix
-pub fn resolve_project_paths(cwd: &Path, project_path: &Path) -> anyhow::Result<ResolvedProjectPaths> {
+pub fn resolve_project_paths(
+    cwd: &Path,
+    project_path: &Path,
+) -> anyhow::Result<ResolvedProjectPaths> {
     let project_path = crate::path_utils::expand_tilde(project_path);
     let candidates = build_candidate_progress_files(cwd, &project_path);
 
@@ -56,9 +59,7 @@ pub fn resolve_project_paths(cwd: &Path, project_path: &Path) -> anyhow::Result<
                 .join("\n");
             anyhow::bail!("no progress file found for project path. tried:\n{tried}");
         }
-        1 => found
-            .pop()
-            .context("pop single resolved progress file")?,
+        1 => found.pop().context("pop single resolved progress file")?,
         _ => {
             let candidates = found
                 .into_iter()
@@ -96,9 +97,7 @@ pub async fn run_resume(
     let round_plans = build_round_replay_plans(&resolved, &potter_rollout_lines)?;
 
     let (op_tx, mut op_rx) = unbounded_channel::<codex_protocol::protocol::Op>();
-    tokio::spawn(async move {
-        while op_rx.recv().await.is_some() {}
-    });
+    tokio::spawn(async move { while op_rx.recv().await.is_some() {} });
 
     ui.clear().context("clear TUI before resume replay")?;
 
@@ -116,7 +115,13 @@ pub async fn run_resume(
         let (_fatal_exit_tx, fatal_exit_rx) = unbounded_channel::<String>();
 
         let exit_info = ui
-            .render_turn(String::new(), idx != 0, op_tx.clone(), event_rx, fatal_exit_rx)
+            .render_turn(
+                String::new(),
+                idx != 0,
+                op_tx.clone(),
+                event_rx,
+                fatal_exit_rx,
+            )
             .await?;
 
         match &exit_info.exit_reason {
@@ -358,7 +363,9 @@ struct RolloutContextSnapshot {
     model_provider_id: String,
 }
 
-fn read_rollout_context_snapshot(rollout_path: &Path) -> anyhow::Result<Option<RolloutContextSnapshot>> {
+fn read_rollout_context_snapshot(
+    rollout_path: &Path,
+) -> anyhow::Result<Option<RolloutContextSnapshot>> {
     let file = std::fs::File::open(rollout_path)
         .with_context(|| format!("open rollout {}", rollout_path.display()))?;
     let reader = std::io::BufReader::new(file);
@@ -386,10 +393,10 @@ fn read_rollout_context_snapshot(rollout_path: &Path) -> anyhow::Result<Option<R
                 let Some(payload) = value.get("payload") else {
                     continue;
                 };
-                if cwd.is_none() {
-                    if let Some(v) = payload.get("cwd") {
-                        cwd = serde_json::from_value::<PathBuf>(v.clone()).ok();
-                    }
+                if cwd.is_none()
+                    && let Some(v) = payload.get("cwd")
+                {
+                    cwd = serde_json::from_value::<PathBuf>(v.clone()).ok();
                 }
                 if model.is_none() {
                     model = payload
@@ -478,15 +485,15 @@ mod tests {
     #[test]
     fn resolve_project_paths_supports_relative_short_form() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let main = write_main(
-            temp.path(),
-            ".codexpotter/projects/2026/02/01/1",
+        let main = write_main(temp.path(), ".codexpotter/projects/2026/02/01/1");
+
+        let resolved =
+            resolve_project_paths(temp.path(), Path::new("2026/02/01/1")).expect("resolve");
+
+        assert_eq!(
+            resolved.progress_file,
+            main.canonicalize().expect("canonical")
         );
-
-        let resolved = resolve_project_paths(temp.path(), Path::new("2026/02/01/1"))
-            .expect("resolve");
-
-        assert_eq!(resolved.progress_file, main.canonicalize().expect("canonical"));
         assert_eq!(
             resolved.project_dir,
             main.canonicalize()
@@ -504,14 +511,14 @@ mod tests {
     #[test]
     fn resolve_project_paths_accepts_absolute_project_dir() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let main = write_main(
-            temp.path(),
-            ".codexpotter/projects/2026/02/01/1",
-        );
+        let main = write_main(temp.path(), ".codexpotter/projects/2026/02/01/1");
         let project_dir = main.parent().expect("project dir");
 
         let resolved = resolve_project_paths(temp.path(), project_dir).expect("resolve");
-        assert_eq!(resolved.progress_file, main.canonicalize().expect("canonical"));
+        assert_eq!(
+            resolved.progress_file,
+            main.canonicalize().expect("canonical")
+        );
     }
 
     #[test]
