@@ -6,6 +6,7 @@ mod config;
 mod global_gitignore;
 mod path_utils;
 mod potter_stream_recovery;
+mod potter_rollout;
 mod project;
 mod prompt_queue;
 mod startup;
@@ -165,6 +166,8 @@ async fn main() -> anyhow::Result<()> {
             .parent()
             .context("derive CodexPotter project dir from progress file path")?
             .to_path_buf();
+        let project_dir_abs = workdir.join(&project_dir);
+        let potter_rollout_path = crate::potter_rollout::potter_rollout_path(&project_dir_abs);
         let user_prompt_file = init.progress_file_rel.clone();
         let developer_prompt = crate::project::render_developer_prompt(&init.progress_file_rel);
 
@@ -185,6 +188,14 @@ async fn main() -> anyhow::Result<()> {
                         user_prompt_file: user_prompt_file.clone(),
                     },
                 });
+                crate::potter_rollout::append_line(
+                    &potter_rollout_path,
+                    &crate::potter_rollout::PotterRolloutLine::SessionStarted {
+                        user_message: Some(user_prompt.clone()),
+                        user_prompt_file: user_prompt_file.clone(),
+                    },
+                )
+                .context("append potter-rollout session_started")?;
             }
             let total_rounds = u32::try_from(cli.rounds.get()).unwrap_or(u32::MAX);
             let current_round = u32::try_from(round_index.saturating_add(1)).unwrap_or(u32::MAX);
@@ -195,6 +206,14 @@ async fn main() -> anyhow::Result<()> {
                     total: total_rounds,
                 },
             });
+            crate::potter_rollout::append_line(
+                &potter_rollout_path,
+                &crate::potter_rollout::PotterRolloutLine::RoundStarted {
+                    current: current_round,
+                    total: total_rounds,
+                },
+            )
+            .context("append potter-rollout round_started")?;
 
             let forwarder = {
                 let ui_event_tx = ui_event_tx.clone();
@@ -202,8 +221,37 @@ async fn main() -> anyhow::Result<()> {
                 let progress_file_rel = init.progress_file_rel.clone();
                 let user_prompt_file = user_prompt_file.clone();
                 let git_commit_start = init.git_commit_start.clone();
+                let potter_rollout_path = potter_rollout_path.clone();
+                let fatal_exit_tx = fatal_exit_tx.clone();
                 tokio::spawn(async move {
+                    let mut has_recorded_round_configured = false;
                     while let Some(event) = backend_event_rx.recv().await {
+                        if !has_recorded_round_configured {
+                            if let EventMsg::SessionConfigured(cfg) = &event.msg {
+                                has_recorded_round_configured = true;
+                                let (rollout_path, rollout_path_raw, rollout_base_dir) =
+                                    crate::potter_rollout::resolve_rollout_path_for_recording(
+                                        cfg.rollout_path.clone(),
+                                        &workdir,
+                                    );
+                                if let Err(err) = crate::potter_rollout::append_line(
+                                    &potter_rollout_path,
+                                    &crate::potter_rollout::PotterRolloutLine::RoundConfigured {
+                                        thread_id: cfg.session_id,
+                                        rollout_path,
+                                        rollout_path_raw,
+                                        rollout_base_dir,
+                                    },
+                                ) {
+                                    let _ = fatal_exit_tx.send(format!(
+                                        "failed to write {}: {err:#}",
+                                        potter_rollout_path.display()
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+
                         if matches!(
                             &event.msg,
                             EventMsg::PotterRoundFinished {
@@ -215,6 +263,22 @@ async fn main() -> anyhow::Result<()> {
                         )
                         .unwrap_or(false)
                         {
+                            if let Err(err) = crate::potter_rollout::append_line(
+                                &potter_rollout_path,
+                                &crate::potter_rollout::PotterRolloutLine::SessionSucceeded {
+                                    rounds: current_round,
+                                    duration_secs: project_started_at.elapsed().as_secs(),
+                                    user_prompt_file: user_prompt_file.clone(),
+                                    git_commit_start: git_commit_start.clone(),
+                                    git_commit_end: crate::project::resolve_git_commit(&workdir),
+                                },
+                            ) {
+                                let _ = fatal_exit_tx.send(format!(
+                                    "failed to write {}: {err:#}",
+                                    potter_rollout_path.display()
+                                ));
+                                break;
+                            }
                             let _ = ui_event_tx.send(Event {
                                 id: "".to_string(),
                                 msg: EventMsg::PotterSessionSucceeded {
@@ -225,6 +289,21 @@ async fn main() -> anyhow::Result<()> {
                                     git_commit_end: crate::project::resolve_git_commit(&workdir),
                                 },
                             });
+                        }
+
+                        if let EventMsg::PotterRoundFinished { outcome } = &event.msg {
+                            if let Err(err) = crate::potter_rollout::append_line(
+                                &potter_rollout_path,
+                                &crate::potter_rollout::PotterRolloutLine::RoundFinished {
+                                    outcome: outcome.clone(),
+                                },
+                            ) {
+                                let _ = fatal_exit_tx.send(format!(
+                                    "failed to write {}: {err:#}",
+                                    potter_rollout_path.display()
+                                ));
+                                break;
+                            }
                         }
 
                         if ui_event_tx.send(event).is_err() {
