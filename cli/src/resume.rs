@@ -242,8 +242,7 @@ fn load_potter_rollout_lines(
 ) -> anyhow::Result<Vec<crate::potter_rollout::PotterRolloutLine>> {
     if !potter_rollout_path.exists() {
         anyhow::bail!(
-            "unsupported project: missing {}",
-            potter_rollout_path.display()
+            "unsupported project: the project is from an older version of CodexPotter (missing potter-rollout.jsonl)",
         );
     }
     if !potter_rollout_path.is_file() {
@@ -751,7 +750,7 @@ mod tests {
         let err = load_potter_rollout_lines(&path).expect_err("expected missing error");
         let message = format!("{err:#}");
         assert!(
-            message.contains("unsupported project: missing"),
+            message.contains("the project is from an older version of CodexPotter"),
             "unexpected error: {message}"
         );
         assert!(message.contains("potter-rollout.jsonl"));
