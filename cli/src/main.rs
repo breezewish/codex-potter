@@ -344,7 +344,6 @@ fn derive_resume_project_path_from_project_dir(project_dir: &Path) -> Option<Str
 
 fn print_resume_note(project_path: &str) {
     let command = format!("codex-potter resume {project_path}");
-    println!();
     println!("{} To continue this project, run:", ansi_bold("Note:"));
     println!("  {}", ansi_cyan(&command));
 }
