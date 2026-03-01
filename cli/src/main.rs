@@ -16,6 +16,7 @@ mod round_runner;
 mod startup;
 
 use std::num::NonZeroUsize;
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -108,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = parse_cli();
     let bypass = cli.dangerously_bypass_approvals_and_sandbox;
     let sandbox = cli.sandbox;
+    let mut resume_note_project_path: Option<String> = None;
 
     let check_for_update_on_startup = crate::config::ConfigStore::new_default()
         .and_then(|store| store.check_for_update_on_startup())
@@ -266,7 +268,13 @@ async fn main() -> anyhow::Result<()> {
             .await?;
 
             match &round_result.exit_reason {
-                ExitReason::UserRequested => break 'session,
+                ExitReason::UserRequested => {
+                    resume_note_project_path = Some(
+                        derive_resume_project_path_from_project_dir(&project_dir)
+                            .unwrap_or_else(|| project_dir.to_string_lossy().to_string()),
+                    );
+                    break 'session;
+                }
                 ExitReason::TaskFailed(_) => break,
                 ExitReason::Fatal(_) => {
                     // `std::process::exit` skips destructors, so explicitly drop the UI to restore
@@ -280,6 +288,11 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
         }
+    }
+
+    drop(ui);
+    if let Some(project_path) = resume_note_project_path {
+        print_resume_note(&project_path);
     }
 
     Ok(())
@@ -311,6 +324,37 @@ fn run_update_action(action: codex_tui::UpdateAction) -> anyhow::Result<()> {
 
     println!("Update ran successfully! Please restart CodexPotter.");
     Ok(())
+}
+
+fn derive_resume_project_path_from_project_dir(project_dir: &Path) -> Option<String> {
+    let projects_root = Path::new(".codexpotter").join("projects");
+    let project_path = project_dir.strip_prefix(&projects_root).ok()?;
+    let parts = project_path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
+fn print_resume_note(project_path: &str) {
+    let command = format!("codex-potter resume {project_path}");
+    println!();
+    println!("{} To continue this project, run:", ansi_bold("Note:"));
+    println!("  {}", ansi_cyan(&command));
+}
+
+fn ansi_bold(text: &str) -> String {
+    format!("\u{1b}[1m{text}\u{1b}[0m")
+}
+
+fn ansi_cyan(text: &str) -> String {
+    format!("\u{1b}[36m{text}\u{1b}[0m")
 }
 
 struct GlobalGitignorePromptPlan {
@@ -386,6 +430,7 @@ async fn maybe_prompt_global_gitignore(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn rounds_must_be_at_least_one() {
@@ -445,5 +490,23 @@ mod tests {
             panic!("expected resume command, got: {:?}", cli.command);
         };
         assert_eq!(project_path, None);
+    }
+
+    #[test]
+    fn derive_resume_project_path_from_project_dir_strips_projects_root() {
+        let project_dir = Path::new(".codexpotter/projects/2026/03/01/6");
+        assert_eq!(
+            derive_resume_project_path_from_project_dir(project_dir),
+            Some("2026/03/01/6".to_string())
+        );
+    }
+
+    #[test]
+    fn derive_resume_project_path_from_project_dir_returns_none_when_unexpected() {
+        let project_dir = Path::new("not-a-project-dir");
+        assert_eq!(
+            derive_resume_project_path_from_project_dir(project_dir),
+            None
+        );
     }
 }

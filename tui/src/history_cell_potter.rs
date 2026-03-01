@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 use std::time::Duration;
+use std::{ffi::OsStr, path::Path};
 
 use ratatui::style::Modifier;
 use ratatui::style::Style;
@@ -83,6 +84,9 @@ impl HistoryCell for PotterSessionSucceededCell {
         let summary_style = Style::default()
             .fg(secondary_color())
             .add_modifier(Modifier::BOLD);
+        let resume_project_path = derive_resume_project_path(&self.user_prompt_file)
+            .unwrap_or_else(|| self.user_prompt_file.to_string_lossy().to_string());
+        let resume_command = format!("codex-potter resume {resume_project_path}");
 
         let mut lines: Vec<Line<'static>> = vec![
             potter_session_succeeded_separator(width),
@@ -113,6 +117,12 @@ impl HistoryCell for PotterSessionSucceededCell {
             ]));
         }
 
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            "    Iterate more: ".into(),
+            resume_command.cyan(),
+        ]));
+
         lines
     }
 }
@@ -128,6 +138,30 @@ fn short_git_commit(commit: &str) -> String {
         return commit.to_string();
     }
     commit[..SHORT_SHA_LEN].to_string()
+}
+
+fn derive_resume_project_path(progress_file: &Path) -> Option<String> {
+    let project_dir = match progress_file.file_name() {
+        Some(name) if name == OsStr::new("MAIN.md") => progress_file.parent()?,
+        _ => progress_file,
+    };
+
+    let components = project_dir
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let projects_start = components
+        .windows(2)
+        .position(|window| window[0] == ".codexpotter" && window[1] == "projects")?;
+    let suffix = components.get(projects_start.saturating_add(2)..)?;
+    if suffix.is_empty() {
+        return None;
+    }
+    Some(suffix.join("/"))
 }
 
 #[derive(Debug, Clone)]

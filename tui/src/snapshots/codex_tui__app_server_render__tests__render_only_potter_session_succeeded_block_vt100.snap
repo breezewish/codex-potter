@@ -7,8 +7,6 @@ expression: terminal.backend().vt100().screen().contents()
 
 
 
-
-
 › test prompt
 
 
@@ -25,3 +23,5 @@ expression: terminal.backend().vt100().screen().contents()
     Task history: .codexpotter/projects/2026/02/01/11/MAIN.md
 
     Git:          fb827a2 -> 662d232
+
+    Iterate more: codex-potter resume 2026/02/01/11
