@@ -286,7 +286,9 @@ pub async fn prompt_user_with_tui(
                         }
                         match result {
                             InputResult::Submitted(text) | InputResult::Queued(text) => {
-                                prompt_history.record_submission(&text);
+                                let history_text =
+                                    bottom_pane.composer().encode_prompt_history_text(&text);
+                                prompt_history.record_submission(&history_text);
                                 return Ok(Some(text));
                             }
                             _ => {}
@@ -1269,7 +1271,11 @@ impl RenderAppState {
 
         match result {
             InputResult::Submitted(text) | InputResult::Queued(text) => {
-                self.prompt_history.record_submission(&text);
+                let history_text = self
+                    .bottom_pane
+                    .composer()
+                    .encode_prompt_history_text(&text);
+                self.prompt_history.record_submission(&history_text);
                 self.queued_user_messages.push_back(text);
                 self.refresh_queued_user_messages();
                 frame_requester.schedule_frame();

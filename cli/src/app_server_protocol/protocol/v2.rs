@@ -230,6 +230,10 @@ pub enum UserInput {
         name: String,
         path: PathBuf,
     },
+    Mention {
+        name: String,
+        path: String,
+    },
 }
 
 impl From<CoreUserInput> for UserInput {
@@ -245,6 +249,7 @@ impl From<CoreUserInput> for UserInput {
             CoreUserInput::Image { image_url } => UserInput::Image { url: image_url },
             CoreUserInput::LocalImage { path } => UserInput::LocalImage { path },
             CoreUserInput::Skill { name, path } => UserInput::Skill { name, path },
+            CoreUserInput::Mention { name, path } => UserInput::Mention { name, path },
             _ => unreachable!("unsupported user input variant"),
         }
     }

@@ -24,8 +24,9 @@ impl HistoryEntry {
     }
 
     pub fn from_text(text: String) -> Self {
+        let decoded = crate::mention_codec::decode_history_mentions(&text);
         Self {
-            text,
+            text: decoded.text,
             text_elements: Vec::new(),
             local_image_paths: Vec::new(),
         }
@@ -257,6 +258,12 @@ mod tests {
             history.local_history.last().unwrap(),
             &HistoryEntry::from_text("world".to_string())
         );
+    }
+
+    #[test]
+    fn history_entry_from_text_decodes_linked_mentions() {
+        let entry = HistoryEntry::from_text("Use [$figma](app://figma-1).".to_string());
+        assert_eq!(entry.text, "Use $figma.");
     }
 
     #[test]

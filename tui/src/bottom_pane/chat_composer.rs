@@ -132,6 +132,7 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
+use crate::mention_codec::LinkedMention;
 use crate::skills_discovery::SkillMetadata;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use std::cell::RefCell;
@@ -435,6 +436,72 @@ impl ChatComposer {
             }
         }
         text
+    }
+
+    /// Encode skill mentions in a prompt-history line.
+    ///
+    /// `codex-potter` keeps a text-only JSONL prompt history. To preserve the skill path for
+    /// `$name` mentions, we encode them as markdown links (e.g. `[$name](/abs/path/SKILL.md)`).
+    /// When the entry is later recalled, it is decoded back to the visible `$name` token.
+    pub fn encode_prompt_history_text(&self, text: &str) -> String {
+        let mentions = self.linked_skill_mentions_for_history(text);
+        crate::mention_codec::encode_history_mentions(text, &mentions)
+    }
+
+    fn linked_skill_mentions_for_history(&self, text: &str) -> Vec<LinkedMention> {
+        if text.is_empty() || self.skills.is_empty() {
+            return Vec::new();
+        }
+
+        let mut skills_by_name = HashMap::<&str, &PathBuf>::new();
+        for skill in &self.skills {
+            skills_by_name
+                .entry(skill.name.as_str())
+                .or_insert(&skill.path);
+        }
+
+        let bytes = text.as_bytes();
+        let mut out = Vec::new();
+        let mut index = 0usize;
+
+        while index < bytes.len() {
+            if bytes[index] == b'$' {
+                let name_start = index + 1;
+                if let Some(first) = bytes.get(name_start)
+                    && matches!(
+                        *first,
+                        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-'
+                    )
+                {
+                    let mut name_end = name_start + 1;
+                    while let Some(next) = bytes.get(name_end)
+                        && matches!(
+                            *next,
+                            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-'
+                        )
+                    {
+                        name_end += 1;
+                    }
+
+                    let name = &text[name_start..name_end];
+                    if let Some(path) = skills_by_name.get(name) {
+                        out.push(LinkedMention {
+                            mention: name.to_string(),
+                            path: path.to_string_lossy().to_string(),
+                        });
+                    }
+                    index = name_end;
+                    continue;
+                }
+            }
+
+            let Some(ch) = text[index..].chars().next() else {
+                break;
+            };
+            index += ch.len_utf8();
+        }
+
+        out
     }
 
     /// Override the footer hint items displayed beneath the composer. Passing
@@ -1790,6 +1857,33 @@ mod tests {
 
         assert_eq!(composer.current_text(), "$my-skill ");
         assert!(matches!(composer.active_popup, ActivePopup::None));
+    }
+
+    #[test]
+    fn encode_prompt_history_text_links_skill_mentions() {
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Assign new task to CodexPotter".to_string(),
+            false,
+        );
+
+        composer.skills = vec![crate::skills_discovery::SkillMetadata {
+            name: "my-skill".to_string(),
+            description: "My test skill.".to_string(),
+            short_description: None,
+            interface: None,
+            path: std::path::PathBuf::from("/tmp/my-skill/SKILL.md"),
+            scope: crate::skills_discovery::SkillScope::User,
+        }];
+
+        assert_eq!(
+            composer.encode_prompt_history_text("Use $my-skill."),
+            "Use [$my-skill](/tmp/my-skill/SKILL.md)."
+        );
     }
 
     #[test]

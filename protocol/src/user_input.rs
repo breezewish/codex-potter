@@ -27,6 +27,10 @@ pub enum UserInput {
         name: String,
         path: std::path::PathBuf,
     },
+    /// Explicit mention selected by the user (name + canonical path).
+    ///
+    /// The path may be a connector URI (e.g. `app://...`, `mcp://...`) or a skill reference.
+    Mention { name: String, path: String },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
