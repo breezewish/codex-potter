@@ -73,7 +73,7 @@ impl ExecCell {
         self.calls.iter()
     }
 
-    pub(super) fn is_exploring_call(call: &ExecCall) -> bool {
+    fn is_exploring_call(call: &ExecCall) -> bool {
         !matches!(call.source, ExecCommandSource::UserShell)
             && !call.parsed.is_empty()
             && call.parsed.iter().all(|p| {

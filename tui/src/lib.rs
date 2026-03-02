@@ -1,5 +1,6 @@
 // Forbid accidental stdout/stderr writes in the library portion of the TUI.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+#![deny(clippy::disallowed_methods)]
 
 mod exit;
 

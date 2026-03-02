@@ -108,13 +108,13 @@ mod imp {
         CACHE.get_or_init(|| Mutex::new(Cache::default()))
     }
 
-    pub(super) fn default_colors() -> Option<DefaultColors> {
+    pub fn default_colors() -> Option<DefaultColors> {
         let cache = default_colors_cache();
         let mut cache = cache.lock().ok()?;
         cache.get_or_init_with(|| query_default_colors().unwrap_or_default())
     }
 
-    pub(super) fn requery_default_colors() {
+    pub fn requery_default_colors() {
         if let Ok(mut cache) = default_colors_cache().lock() {
             // Don't try to refresh if the cache is already attempted and failed.
             if cache.attempted && cache.value.is_none() {
@@ -142,11 +142,11 @@ mod imp {
 mod imp {
     use super::DefaultColors;
 
-    pub(super) fn default_colors() -> Option<DefaultColors> {
+    pub fn default_colors() -> Option<DefaultColors> {
         None
     }
 
-    pub(super) fn requery_default_colors() {}
+    pub fn requery_default_colors() {}
 }
 
 /// The subset of Xterm colors that are usually consistent across terminals.

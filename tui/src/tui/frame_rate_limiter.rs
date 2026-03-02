@@ -10,17 +10,17 @@ use std::time::Duration;
 use std::time::Instant;
 
 /// A 60 FPS minimum frame interval (≈16.67ms).
-pub(super) const MIN_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
+pub const MIN_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 
 /// Remembers the most recent emitted draw, allowing deadlines to be clamped forward.
 #[derive(Debug, Default)]
-pub(super) struct FrameRateLimiter {
+pub struct FrameRateLimiter {
     last_emitted_at: Option<Instant>,
 }
 
 impl FrameRateLimiter {
     /// Returns `requested`, clamped forward if it would exceed the maximum frame rate.
-    pub(super) fn clamp_deadline(&self, requested: Instant) -> Instant {
+    pub fn clamp_deadline(&self, requested: Instant) -> Instant {
         let Some(last_emitted_at) = self.last_emitted_at else {
             return requested;
         };
@@ -31,7 +31,7 @@ impl FrameRateLimiter {
     }
 
     /// Records that a draw notification was emitted at `emitted_at`.
-    pub(super) fn mark_emitted(&mut self, emitted_at: Instant) {
+    pub fn mark_emitted(&mut self, emitted_at: Instant) {
         self.last_emitted_at = Some(emitted_at);
     }
 }
