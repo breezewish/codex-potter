@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -40,6 +41,9 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell_potter::PotterStreamRecoveryRetryCell;
 use crate::history_cell_potter::PotterStreamRecoveryUnrecoverableCell;
 use crate::render::renderable::Renderable;
+use crate::streaming::chunking::AdaptiveChunkingPolicy;
+use crate::streaming::commit_tick::CommitTickScope;
+use crate::streaming::commit_tick::run_commit_tick;
 use crate::streaming::controller::StreamController;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
@@ -548,6 +552,7 @@ pub async fn run_render_only_with_tui_options_and_queue(
 struct RenderOnlyProcessor {
     app_event_tx: AppEventSender,
     stream: StreamController,
+    adaptive_chunking: AdaptiveChunkingPolicy,
     token_usage: TokenUsage,
     context_usage: TokenUsage,
     model_context_window: Option<i64>,
@@ -579,6 +584,7 @@ impl RenderOnlyProcessor {
         Self {
             app_event_tx,
             stream: StreamController::new(None),
+            adaptive_chunking: AdaptiveChunkingPolicy::default(),
             token_usage: TokenUsage::default(),
             context_usage: TokenUsage::default(),
             model_context_window: None,
@@ -601,6 +607,7 @@ impl RenderOnlyProcessor {
         if let Some(cell) = self.stream.finalize() {
             self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
         }
+        self.adaptive_chunking.reset();
         self.app_event_tx.send(AppEvent::StopCommitAnimation);
         self.saw_agent_delta = false;
         self.needs_final_message_separator = true;
@@ -613,11 +620,21 @@ impl RenderOnlyProcessor {
     }
 
     fn on_commit_tick(&mut self) {
-        let (cell, idle) = self.stream.on_commit_tick();
-        if let Some(cell) = cell {
+        self.run_commit_tick_with_scope(CommitTickScope::AnyMode);
+    }
+
+    fn run_commit_tick_with_scope(&mut self, scope: CommitTickScope) {
+        let outcome = run_commit_tick(
+            &mut self.adaptive_chunking,
+            Some(&mut self.stream),
+            scope,
+            Instant::now(),
+        );
+        for cell in outcome.cells {
             self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
         }
-        if idle {
+
+        if outcome.has_controller && outcome.all_idle {
             self.app_event_tx.send(AppEvent::StopCommitAnimation);
         }
     }
@@ -732,6 +749,7 @@ impl RenderOnlyProcessor {
                 self.saw_agent_delta = true;
                 if self.stream.push(&ev.delta) {
                     self.app_event_tx.send(AppEvent::StartCommitAnimation);
+                    self.run_commit_tick_with_scope(CommitTickScope::CatchUpOnly);
                 }
             }
             EventMsg::AgentMessage(ev) => {

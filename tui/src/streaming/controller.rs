@@ -1,6 +1,8 @@
 use crate::history_cell::HistoryCell;
 use crate::history_cell::{self};
 use ratatui::text::Line;
+use std::time::Duration;
+use std::time::Instant;
 
 use super::StreamState;
 
@@ -73,6 +75,28 @@ impl StreamController {
     pub fn on_commit_tick(&mut self) -> (Option<Box<dyn HistoryCell>>, bool) {
         let step = self.state.step();
         (self.emit(step), self.state.is_idle())
+    }
+
+    /// Step animation: commit at most `max_lines` queued lines.
+    ///
+    /// This is intended for adaptive catch-up drains. Callers should keep `max_lines` bounded; a
+    /// very large value can collapse perceived animation into a single jump.
+    pub fn on_commit_tick_batch(
+        &mut self,
+        max_lines: usize,
+    ) -> (Option<Box<dyn HistoryCell>>, bool) {
+        let step = self.state.drain_n(max_lines.max(1));
+        (self.emit(step), self.state.is_idle())
+    }
+
+    /// Returns the current number of queued lines waiting to be displayed.
+    pub fn queued_lines(&self) -> usize {
+        self.state.queued_len()
+    }
+
+    /// Returns the age of the oldest queued line.
+    pub fn oldest_queued_age(&self, now: Instant) -> Option<Duration> {
+        self.state.oldest_queued_age(now)
     }
 
     fn emit(&mut self, lines: Vec<Line<'static>>) -> Option<Box<dyn HistoryCell>> {
