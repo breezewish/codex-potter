@@ -41,23 +41,23 @@ Run the workflow below to make steady progress toward the overall goal recorded 
 4. You may add/remove `Todo` tasks as needed.
    - Break large tasks into small, concrete steps; adjust tasks as understanding improves.
 
-5. If all `Todo` tasks are complete, it does not mean the work is done. Instead:
+5. If all `Todo` tasks are complete, you need to do strict review and try to enhance:
 
-   5.1 Read full progress file, deep research with `Overall Goal`, then verify and review against what has changed so far.
+   5.1 Read full progress file, analyze and understand working dir with `Overall Goal`, then verify and review against what has changed so far. Utilize review skills if available.
+
+   Progress file's front matter recorded git commit before change; use it to learn changes.
 
    5.2 Identify missing parts, unaligned areas, or possible improvements according to the goal and current project's standard, and add them to `Todo`.
 
-   Important: tasks in `Done` are only for you to *understand the current approach*; they not be not correct, may not respect the project's standard, or may not be the best way. You must re-evaluate from scratch, based on the current impl of the codebase to enhance your understanding of the user request, see whether there are completely better ways to achieve the overall goal, or even something is still missing. Done tasks may also indicate what has been tried before, help you avoid going down wrong paths again.
+   Important principle: tasks in `Done` are only for you to _understand the current approach_; they may be incorrect, may not respect the project's standard, or may not be the best way. You must re-evaluate from scratch, see whether there are completely better ways to achieve the overall goal, or even something is still missing. Done tasks also indicate what has been tried, help you avoid going down wrong paths again.
 
-   5.3 If the overall goal is to make changes, consider improvements of various kinds (coding, docs, UX, performance, edge cases, etc), for example, but not limited to:
+   Hint: If the overall goal is to make changes, you may consider improvements of various kinds (coding, docs, UX, performance, edge cases, etc), for example but not limited to:
    - Coding kind: polish, simplification/completion, quality, performance, edge cases, error handling, UX, docs, etc.
    - Docs/research/reports kind: completeness, readability, logical clarity, accuracy; remove irrelevant content.
 
-   5.4 Stop if you are very certain everything is done and no further improvements are possible.
+   5.4 Stop only if you are very certain everything is done and no further improvements are possible.
 
    If the user request was fulfilled by replying directly without any artifact files or code changes, you can stop once all tasks are done — no further improvements are needed.
-
-   Progress file's front matter recorded the git commit before any work in progress file began; use it to identify what has changed so far.
 
 **Requirements:**
 
