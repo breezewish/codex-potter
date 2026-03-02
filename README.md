@@ -60,6 +60,7 @@ codex-potter --yolo
 - [x] Skill popup
 - [x] Resume (history replay + continue iterating)
 - [x] Better handling of stream disconnect / similar network issues
+- [ ] Agent-call friendly (non-interactive exec and resume)
 - [ ] Better sandbox support
 - [ ] Interoperability with codex CLI sessions (for follow-up prompts)
 - [ ] Allow opting out knowledge base
