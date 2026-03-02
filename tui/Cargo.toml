@@ -54,8 +54,8 @@ tokio = { workspace = true, features = [
 ] }
 tokio-stream = { workspace = true, features = ["sync"] }
 tracing = { workspace = true, features = ["log"] }
-tree-sitter-bash = { workspace = true }
-tree-sitter-highlight = { workspace = true }
+syntect = { workspace = true }
+two-face = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 url = { workspace = true }

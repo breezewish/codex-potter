@@ -652,10 +652,83 @@ fn link() {
 }
 
 #[test]
-fn code_block_unhighlighted() {
+fn code_block_known_lang_has_syntax_colors() {
     let text = render_markdown_text("```rust\nfn main() {}\n```\n");
-    let expected = Text::from_iter([Line::from_iter(["", "fn main() {}"])]);
-    assert_eq!(text, expected);
+    let content: Vec<String> = text
+        .lines
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.clone())
+                .collect::<String>()
+        })
+        .collect();
+    // Content should be preserved; ignore any leading/trailing empty line(s).
+    let content: Vec<&str> = content
+        .iter()
+        .map(std::string::String::as_str)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert_eq!(content, vec!["fn main() {}"]);
+
+    // At least one span should have non-default style (syntax highlighting).
+    let has_colored_span = text
+        .lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .any(|sp| sp.style.fg.is_some());
+    assert!(has_colored_span, "expected syntax-highlighted spans with color");
+}
+
+#[test]
+fn code_block_unknown_lang_plain() {
+    let text = render_markdown_text("```xyzlang\nhello world\n```\n");
+    let content: Vec<String> = text
+        .lines
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.clone())
+                .collect::<String>()
+        })
+        .collect();
+    let content: Vec<&str> = content
+        .iter()
+        .map(std::string::String::as_str)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert_eq!(content, vec!["hello world"]);
+
+    // No syntax coloring for unknown language — all spans have default style.
+    let has_colored_span = text
+        .lines
+        .iter()
+        .flat_map(|l| l.spans.iter())
+        .any(|sp| sp.style.fg.is_some());
+    assert!(!has_colored_span, "expected no syntax coloring for unknown lang");
+}
+
+#[test]
+fn code_block_no_lang_plain() {
+    let text = render_markdown_text("```\nno lang specified\n```\n");
+    let content: Vec<String> = text
+        .lines
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.clone())
+                .collect::<String>()
+        })
+        .collect();
+    let content: Vec<&str> = content
+        .iter()
+        .map(std::string::String::as_str)
+        .filter(|s| !s.is_empty())
+        .collect();
+    assert_eq!(content, vec!["no lang specified"]);
 }
 
 #[test]
