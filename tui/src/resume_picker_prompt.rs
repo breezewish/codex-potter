@@ -40,6 +40,8 @@ pub struct ResumePickerRow {
     pub project_path: PathBuf,
     /// The user-facing prompt/title to render in the picker.
     pub user_request: String,
+    /// The created timestamp, used for display and sorting.
+    pub created_at: SystemTime,
     /// The last updated timestamp, used for display and sorting (newest first).
     pub updated_at: SystemTime,
     /// Git branch recorded in the project progress file front matter.
@@ -113,9 +115,32 @@ impl Drop for AltScreenGuard<'_> {
 
 #[derive(Clone)]
 struct ColumnMetrics {
+    max_created_width: usize,
     max_updated_width: usize,
     max_branch_width: usize,
-    labels: Vec<(String, String)>,
+    labels: Vec<(String, String, String)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResumeSortKey {
+    CreatedAt,
+    UpdatedAt,
+}
+
+impl ResumeSortKey {
+    fn toggle(self) -> Self {
+        match self {
+            Self::CreatedAt => Self::UpdatedAt,
+            Self::UpdatedAt => Self::CreatedAt,
+        }
+    }
+}
+
+fn sort_key_label(sort_key: ResumeSortKey) -> &'static str {
+    match sort_key {
+        ResumeSortKey::CreatedAt => "Created",
+        ResumeSortKey::UpdatedAt => "Updated",
+    }
 }
 
 struct ResumePickerScreen {
@@ -126,6 +151,7 @@ struct ResumePickerScreen {
     all_rows_lower: Vec<String>,
 
     query: String,
+    sort_key: ResumeSortKey,
     selected: usize,
     scroll_top: usize,
     view_rows: usize,
@@ -140,7 +166,15 @@ impl ResumePickerScreen {
     fn new(request_frame: FrameRequester, rows: Vec<ResumePickerRow>, now: SystemTime) -> Self {
         let all_rows_lower = rows
             .iter()
-            .map(|row| row.user_request.to_lowercase())
+            .map(|row| {
+                format!(
+                    "{}\n{}\n{}",
+                    row.user_request,
+                    row.git_branch.as_deref().unwrap_or_default(),
+                    row.project_path.to_string_lossy(),
+                )
+                .to_lowercase()
+            })
             .collect();
 
         let mut screen = Self {
@@ -149,11 +183,13 @@ impl ResumePickerScreen {
             all_rows: rows,
             all_rows_lower,
             query: String::new(),
+            sort_key: ResumeSortKey::UpdatedAt,
             selected: 0,
             scroll_top: 0,
             view_rows: 0,
             filtered_indices: Vec::new(),
             filtered_metrics: ColumnMetrics {
+                max_created_width: UnicodeWidthStr::width("Created"),
                 max_updated_width: UnicodeWidthStr::width("Updated"),
                 max_branch_width: UnicodeWidthStr::width("Branch"),
                 labels: Vec::new(),
@@ -200,6 +236,7 @@ impl ResumePickerScreen {
             KeyCode::Down => self.move_selection(1),
             KeyCode::PageUp => self.page_selection(-1),
             KeyCode::PageDown => self.page_selection(1),
+            KeyCode::Tab => self.toggle_sort_key(),
             KeyCode::Backspace => {
                 if self.query.pop().is_some() {
                     self.recompute_filter();
@@ -276,6 +313,16 @@ impl ResumePickerScreen {
     }
 
     fn recompute_filter(&mut self) {
+        self.recompute_filter_preserving_selection(None);
+    }
+
+    fn toggle_sort_key(&mut self) {
+        let selected = self.selected_row().map(|row| row.project_path.clone());
+        self.sort_key = self.sort_key.toggle();
+        self.recompute_filter_preserving_selection(selected.as_ref());
+    }
+
+    fn recompute_filter_preserving_selection(&mut self, selected: Option<&PathBuf>) {
         let needle = self.query.to_lowercase();
         let mut filtered: Vec<usize> = Vec::new();
         if needle.is_empty() {
@@ -288,9 +335,33 @@ impl ResumePickerScreen {
             }
         }
 
+        filtered.sort_by(|a, b| match self.sort_key {
+            ResumeSortKey::CreatedAt => self
+                .all_rows
+                .get(*b)
+                .map(|row| row.created_at)
+                .cmp(&self.all_rows.get(*a).map(|row| row.created_at))
+                .then_with(|| a.cmp(b)),
+            ResumeSortKey::UpdatedAt => self
+                .all_rows
+                .get(*b)
+                .map(|row| row.updated_at)
+                .cmp(&self.all_rows.get(*a).map(|row| row.updated_at))
+                .then_with(|| a.cmp(b)),
+        });
+
         self.filtered_indices = filtered;
-        self.selected = 0;
+        self.selected = selected
+            .and_then(|selected| {
+                self.filtered_indices.iter().position(|idx| {
+                    self.all_rows
+                        .get(*idx)
+                        .is_some_and(|row| row.project_path == *selected)
+                })
+            })
+            .unwrap_or(0);
         self.scroll_top = 0;
+        self.ensure_selected_visible();
         self.filtered_metrics =
             calculate_column_metrics(&self.all_rows, &self.filtered_indices, self.now);
         self.request_frame.schedule_frame();
@@ -311,8 +382,15 @@ impl WidgetRef for &ResumePickerScreen {
         .areas(area);
 
         // Header
-        Paragraph::new(Line::from(vec!["Resume a previous session".bold().cyan()]))
-            .render(header, buf);
+        let header_line: Line = vec![
+            "Resume a previous session".bold().cyan(),
+            "  ".into(),
+            "Sort:".dim(),
+            " ".into(),
+            sort_key_label(self.sort_key).magenta(),
+        ]
+        .into();
+        Paragraph::new(header_line).render(header, buf);
 
         // Search line
         let q = if self.query.is_empty() {
@@ -328,18 +406,21 @@ impl WidgetRef for &ResumePickerScreen {
         // Hint line
         let hint_line: Line = vec![
             key_hint::plain(KeyCode::Enter).into(),
-            " to resume ".dim(),
-            "    ".dim(),
+            " resume ".dim(),
+            "  ".dim(),
             key_hint::plain(KeyCode::Esc).into(),
-            " to start new ".dim(),
-            "    ".dim(),
+            " new ".dim(),
+            "  ".dim(),
             key_hint::ctrl(KeyCode::Char('c')).into(),
-            " to quit ".dim(),
-            "    ".dim(),
+            " quit ".dim(),
+            "  ".dim(),
+            key_hint::plain(KeyCode::Tab).into(),
+            " sort ".dim(),
+            "  ".dim(),
             key_hint::plain(KeyCode::Up).into(),
             "/".dim(),
             key_hint::plain(KeyCode::Down).into(),
-            " to browse".dim(),
+            " browse".dim(),
         ]
         .into();
         Paragraph::new(hint_line).render(hint, buf);
@@ -370,21 +451,25 @@ fn calculate_column_metrics(
         format!("…{tail}")
     }
 
-    let mut labels: Vec<(String, String)> = Vec::with_capacity(filtered_indices.len());
+    let mut labels: Vec<(String, String, String)> = Vec::with_capacity(filtered_indices.len());
+    let mut max_created_width = UnicodeWidthStr::width("Created");
     let mut max_updated_width = UnicodeWidthStr::width("Updated");
     let mut max_branch_width = UnicodeWidthStr::width("Branch");
 
     for &idx in filtered_indices {
         let row = &all_rows[idx];
+        let created = human_time_ago(row.created_at, now);
         let updated = human_time_ago(row.updated_at, now);
         let branch_raw = row.git_branch.clone().unwrap_or_default();
         let branch = right_elide(&branch_raw, 24);
+        max_created_width = max_created_width.max(UnicodeWidthStr::width(created.as_str()));
         max_updated_width = max_updated_width.max(UnicodeWidthStr::width(updated.as_str()));
         max_branch_width = max_branch_width.max(UnicodeWidthStr::width(branch.as_str()));
-        labels.push((updated, branch));
+        labels.push((created, updated, branch));
     }
 
     ColumnMetrics {
+        max_created_width,
         max_updated_width,
         max_branch_width,
         labels,
@@ -431,6 +516,14 @@ fn render_column_headers(buf: &mut Buffer, area: Rect, metrics: &ColumnMetrics) 
     }
 
     let mut spans: Vec<Span> = vec!["  ".into()];
+    let created_label = format!(
+        "{text:<width$}",
+        text = "Created",
+        width = metrics.max_created_width
+    );
+    spans.push(Span::from(created_label).bold());
+    spans.push("  ".into());
+
     let updated_label = format!(
         "{text:<width$}",
         text = "Updated",
@@ -472,11 +565,12 @@ fn render_list(buf: &mut Buffer, area: Rect, screen: &ResumePickerScreen, metric
     let start = screen.scroll_top.min(rows.len().saturating_sub(1));
     let end = rows.len().min(start + capacity);
 
+    let max_created_width = metrics.max_created_width;
     let max_updated_width = metrics.max_updated_width;
     let max_branch_width = metrics.max_branch_width;
 
     let mut y = area.y;
-    for (idx, (&row_idx, (updated_label, branch_label))) in rows[start..end]
+    for (idx, (&row_idx, (created_label, updated_label, branch_label))) in rows[start..end]
         .iter()
         .zip(metrics.labels[start..end].iter())
         .enumerate()
@@ -486,6 +580,7 @@ fn render_list(buf: &mut Buffer, area: Rect, screen: &ResumePickerScreen, metric
         let marker = if is_sel { "> ".bold() } else { "  ".into() };
         let marker_width = 2usize;
 
+        let created_span = Span::from(format!("{created_label:<max_created_width$}")).dim();
         let updated_span = Span::from(format!("{updated_label:<max_updated_width$}")).dim();
         let branch_span = if branch_label.is_empty() {
             Span::from(format!(
@@ -500,12 +595,15 @@ fn render_list(buf: &mut Buffer, area: Rect, screen: &ResumePickerScreen, metric
 
         let mut preview_width = area.width as usize;
         preview_width = preview_width.saturating_sub(marker_width);
+        preview_width = preview_width.saturating_sub(max_created_width + 2);
         preview_width = preview_width.saturating_sub(max_updated_width + 2);
         preview_width = preview_width.saturating_sub(max_branch_width + 2);
 
         let preview = truncate_text(row.user_request.as_str(), preview_width);
         let line: Line = vec![
             marker,
+            created_span,
+            "  ".into(),
             updated_span,
             "  ".into(),
             branch_span,
@@ -556,18 +654,21 @@ mod tests {
             ResumePickerRow {
                 project_path: PathBuf::from("/tmp/a"),
                 user_request: "Fix resume picker timestamps".to_string(),
+                created_at: now - Duration::from_secs(3 * 24 * 60 * 60),
                 updated_at: now - Duration::from_secs(42),
                 git_branch: None,
             },
             ResumePickerRow {
                 project_path: PathBuf::from("/tmp/b"),
                 user_request: "Investigate lazy pagination cap".to_string(),
+                created_at: now - Duration::from_secs(24 * 60 * 60),
                 updated_at: now - Duration::from_secs(35 * 60),
                 git_branch: Some("feature/resume".to_string()),
             },
             ResumePickerRow {
                 project_path: PathBuf::from("/tmp/c"),
                 user_request: "Explain the codebase".to_string(),
+                created_at: now - Duration::from_secs(2 * 60 * 60),
                 updated_at: now - Duration::from_secs(2 * 60 * 60),
                 git_branch: Some("main".to_string()),
             },
@@ -586,6 +687,55 @@ mod tests {
 
         assert_snapshot!(
             "resume_picker_table_vt100",
+            terminal.backend().vt100().screen().contents()
+        );
+    }
+
+    #[test]
+    fn resume_picker_table_sorted_by_created_screen_snapshot() {
+        let backend = VT100Backend::new(80, 9);
+        let mut terminal = Terminal::new(backend).expect("create terminal");
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let rows = vec![
+            ResumePickerRow {
+                project_path: PathBuf::from("/tmp/a"),
+                user_request: "Fix resume picker timestamps".to_string(),
+                created_at: now - Duration::from_secs(3 * 24 * 60 * 60),
+                updated_at: now - Duration::from_secs(42),
+                git_branch: None,
+            },
+            ResumePickerRow {
+                project_path: PathBuf::from("/tmp/b"),
+                user_request: "Investigate lazy pagination cap".to_string(),
+                created_at: now - Duration::from_secs(24 * 60 * 60),
+                updated_at: now - Duration::from_secs(35 * 60),
+                git_branch: Some("feature/resume".to_string()),
+            },
+            ResumePickerRow {
+                project_path: PathBuf::from("/tmp/c"),
+                user_request: "Explain the codebase".to_string(),
+                created_at: now - Duration::from_secs(2 * 60 * 60),
+                updated_at: now - Duration::from_secs(2 * 60 * 60),
+                git_branch: Some("main".to_string()),
+            },
+        ];
+
+        let mut screen = ResumePickerScreen::new(FrameRequester::test_dummy(), rows, now);
+        screen.set_view_rows(5);
+        screen.selected = 1;
+        screen.ensure_selected_visible();
+
+        screen.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        terminal
+            .draw(|frame| {
+                WidgetRef::render_ref(&&screen, frame.area(), frame.buffer_mut());
+            })
+            .expect("draw");
+
+        assert_snapshot!(
+            "resume_picker_table_created_sort_vt100",
             terminal.backend().vt100().screen().contents()
         );
     }

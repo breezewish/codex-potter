@@ -1,6 +1,10 @@
 use std::ffi::OsStr;
 use std::path::Path;
+use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
+use chrono::NaiveDate;
 use codex_tui::ResumePickerRow;
 use ignore::WalkBuilder;
 
@@ -59,6 +63,11 @@ fn row_for_progress_file(
 
     let metadata = std::fs::metadata(&potter_rollout_path)?;
     let updated_at = metadata.modified()?;
+    let created_at = created_at_from_progress_file(
+        &workdir.join(".codexpotter").join("projects"),
+        progress_file,
+    )
+    .unwrap_or(updated_at);
 
     let potter_rollout_lines = crate::potter_rollout::read_lines(&potter_rollout_path)?;
     if potter_rollout_lines.is_empty() {
@@ -90,9 +99,59 @@ fn row_for_progress_file(
     Ok(Some(ResumePickerRow {
         project_path: resolved.project_dir,
         user_request,
+        created_at,
         updated_at,
         git_branch,
     }))
+}
+
+fn created_at_from_progress_file(projects_root: &Path, progress_file: &Path) -> Option<SystemTime> {
+    let rel = progress_file.strip_prefix(projects_root).ok()?;
+    let project_dir_rel = rel.parent()?;
+    if project_dir_rel == Path::new("") {
+        return None;
+    }
+
+    // Supported layouts:
+    // - `YYYY/MM/DD/N/MAIN.md`
+    // - `YYYYMMDD_N/MAIN.md`
+    let components: Vec<&str> = project_dir_rel
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+
+    let (year, month, day, ordinal) = match components.as_slice() {
+        [year, month, day, ordinal] => (
+            year.parse::<i32>().ok()?,
+            month.parse::<u32>().ok()?,
+            day.parse::<u32>().ok()?,
+            ordinal.parse::<u32>().ok()?,
+        ),
+        [flat] => {
+            let (date, ordinal) = flat.split_once('_')?;
+            if date.len() != 8 {
+                return None;
+            }
+            (
+                date[0..4].parse::<i32>().ok()?,
+                date[4..6].parse::<u32>().ok()?,
+                date[6..8].parse::<u32>().ok()?,
+                ordinal.parse::<u32>().ok()?,
+            )
+        }
+        _ => return None,
+    };
+
+    let date = NaiveDate::from_ymd_opt(year, month, day)?;
+    let timestamp_secs: u64 = date
+        .and_hms_opt(0, 0, 0)?
+        .and_utc()
+        .timestamp()
+        .try_into()
+        .ok()?;
+    let ordinal_offset = u64::from(ordinal.saturating_sub(1));
+
+    Some(UNIX_EPOCH + Duration::from_secs(timestamp_secs + ordinal_offset))
 }
 
 fn all_referenced_rollouts_exist(
@@ -365,18 +424,21 @@ git_branch: "{git_branch}"
         let a = ResumePickerRow {
             project_path: PathBuf::from("/a"),
             user_request: String::new(),
+            created_at: SystemTime::UNIX_EPOCH,
             updated_at: SystemTime::UNIX_EPOCH + Duration::from_secs(10),
             git_branch: None,
         };
         let b = ResumePickerRow {
             project_path: PathBuf::from("/b"),
             user_request: String::new(),
+            created_at: SystemTime::UNIX_EPOCH,
             updated_at: SystemTime::UNIX_EPOCH + Duration::from_secs(20),
             git_branch: None,
         };
         let c = ResumePickerRow {
             project_path: PathBuf::from("/c"),
             user_request: String::new(),
+            created_at: SystemTime::UNIX_EPOCH,
             updated_at: SystemTime::UNIX_EPOCH + Duration::from_secs(20),
             git_branch: None,
         };

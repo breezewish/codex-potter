@@ -2,12 +2,12 @@
 source: tui/src/resume_picker_prompt.rs
 expression: terminal.backend().vt100().screen().contents()
 ---
-Resume a previous session  Sort: Updated
+Resume a previous session  Sort: Created
 Type to search
   Created      Updated         Branch          User Request
-  3 days ago   42 seconds ago  -               Fix resume picker timestamps
-> 1 day ago    35 minutes ago  feature/resume  Investigate lazy pagination cap
   2 hours ago  2 hours ago     main            Explain the codebase
+> 1 day ago    35 minutes ago  feature/resume  Investigate lazy pagination cap
+  3 days ago   42 seconds ago  -               Fix resume picker timestamps
 
 
 enter resume   esc new   ctrl + c quit   tab sort   ↑/↓ browse
