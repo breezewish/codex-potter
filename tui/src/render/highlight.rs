@@ -3,6 +3,10 @@
 //! Wraps [syntect] with the [two_face] grammar and theme bundles to provide
 //! ~250-language syntax highlighting.
 //!
+//! Note: unlike upstream Codex TUI, codex-potter currently does not expose a
+//! user-configurable syntax theme picker/override; it always uses the adaptive
+//! default embedded theme (Catppuccin Latte/Mocha) based on terminal background.
+//!
 //! **Guardrails:** inputs exceeding 512 KB or 10 000 lines are rejected early
 //! (returns `None`) to prevent pathological CPU/memory usage. Callers must
 //! fall back to plain unstyled text.

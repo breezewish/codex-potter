@@ -1,3 +1,10 @@
+//! Streaming controllers for newline-gated markdown in the transcript.
+//!
+//! Note: upstream Codex TUI also supports a separate plan stream controller that
+//! streams a styled "Proposed Plan" block. codex-potter renders plan updates via
+//! `EventMsg::PlanUpdate` instead, so only the main agent message stream is
+//! implemented here.
+
 use crate::history_cell::HistoryCell;
 use crate::history_cell::{self};
 use ratatui::text::Line;
