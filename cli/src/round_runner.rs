@@ -85,6 +85,7 @@ pub async fn run_potter_round(
             session_succeeded_rounds,
             prompt: context.turn_prompt.clone(),
             resume_thread_id: None,
+            emit_round_started_event: true,
             record_round_started: true,
             record_round_configured: true,
             replay_event_msgs: Vec::new(),
@@ -122,6 +123,7 @@ pub async fn continue_potter_round(
             session_succeeded_rounds,
             prompt: String::from("Continue"),
             resume_thread_id: Some(resume_thread_id),
+            emit_round_started_event: false,
             record_round_started: false,
             record_round_configured: false,
             replay_event_msgs,
@@ -138,6 +140,7 @@ struct PotterRoundInnerOptions {
     session_succeeded_rounds: u32,
     prompt: String,
     resume_thread_id: Option<codex_protocol::ThreadId>,
+    emit_round_started_event: bool,
     record_round_started: bool,
     record_round_configured: bool,
     replay_event_msgs: Vec<EventMsg>,
@@ -156,6 +159,7 @@ async fn run_potter_round_inner(
         session_succeeded_rounds,
         prompt,
         resume_thread_id,
+        emit_round_started_event,
         record_round_started,
         record_round_configured,
         replay_event_msgs,
@@ -186,22 +190,26 @@ async fn run_potter_round_inner(
         .context("append potter-rollout session_started")?;
     }
 
-    let _ = ui_event_tx.send(Event {
-        id: "".to_string(),
-        msg: EventMsg::PotterRoundStarted {
-            current: round_current,
-            total: round_total,
-        },
-    });
-    if record_round_started {
-        crate::potter_rollout::append_line(
-            &context.potter_rollout_path,
-            &crate::potter_rollout::PotterRolloutLine::RoundStarted {
+    if emit_round_started_event {
+        let _ = ui_event_tx.send(Event {
+            id: "".to_string(),
+            msg: EventMsg::PotterRoundStarted {
                 current: round_current,
                 total: round_total,
             },
-        )
-        .context("append potter-rollout round_started")?;
+        });
+        if record_round_started {
+            crate::potter_rollout::append_line(
+                &context.potter_rollout_path,
+                &crate::potter_rollout::PotterRolloutLine::RoundStarted {
+                    current: round_current,
+                    total: round_total,
+                },
+            )
+            .context("append potter-rollout round_started")?;
+        }
+    } else if record_round_started {
+        anyhow::bail!("internal error: record_round_started without emitting PotterRoundStarted");
     }
 
     for msg in replay_event_msgs {

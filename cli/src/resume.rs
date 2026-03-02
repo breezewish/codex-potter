@@ -109,8 +109,9 @@ pub async fn run_resume(
 
     let ResumeReplayPlans {
         completed_rounds: replay_rounds,
-        unfinished_round,
+        mut unfinished_round,
     } = build_round_replay_plans(&resolved, &potter_rollout_lines)?;
+    let has_completed_rounds = !replay_rounds.is_empty();
 
     let (op_tx, mut op_rx) = unbounded_channel::<codex_protocol::protocol::Op>();
     tokio::spawn(async move { while op_rx.recv().await.is_some() {} });
@@ -155,6 +156,37 @@ pub async fn run_resume(
 
     if user_cancelled_replay {
         return Ok(ResumeExit::Completed);
+    }
+
+    if let Some(unfinished) = unfinished_round.as_mut() {
+        let events = build_unfinished_round_pre_action_events(&resolved, unfinished);
+
+        let (event_tx, event_rx) = unbounded_channel::<Event>();
+        for msg in events {
+            let _ = event_tx.send(Event {
+                id: "".to_string(),
+                msg,
+            });
+        }
+        drop(event_tx);
+
+        let (_fatal_exit_tx, fatal_exit_rx) = unbounded_channel::<String>();
+
+        let exit_info = ui
+            .render_turn(
+                String::new(),
+                has_completed_rounds,
+                op_tx.clone(),
+                event_rx,
+                fatal_exit_rx,
+            )
+            .await?;
+
+        match exit_info.exit_reason {
+            ExitReason::Completed | ExitReason::TaskFailed(_) => {}
+            ExitReason::UserRequested => return Ok(ResumeExit::Completed),
+            ExitReason::Fatal(_) => return Ok(ResumeExit::FatalExitRequested),
+        }
     }
 
     let iterate_rounds_usize = iterate_rounds.get();
@@ -707,6 +739,33 @@ fn read_upstream_rollout_event_msgs(rollout_path: &Path) -> anyhow::Result<Vec<E
     Ok(out)
 }
 
+/// Build the minimal replay events needed to show an unfinished round boundary before prompting.
+///
+/// Note: the trailing `PotterRoundFinished` is synthesized so the render-only runner exits cleanly
+/// (otherwise EOF would be treated as a fatal "Backend disconnected").
+fn build_unfinished_round_pre_action_events(
+    project: &ResolvedProjectPaths,
+    unfinished: &mut UnfinishedRoundPlan,
+) -> Vec<EventMsg> {
+    let mut events = Vec::new();
+    if let Some((user_message, user_prompt_file)) = unfinished.session_started.take() {
+        events.push(EventMsg::PotterSessionStarted {
+            user_message,
+            working_dir: project.workdir.clone(),
+            project_dir: project.project_dir.clone(),
+            user_prompt_file,
+        });
+    }
+    events.push(EventMsg::PotterRoundStarted {
+        current: unfinished.round_current,
+        total: unfinished.round_total,
+    });
+    events.push(EventMsg::PotterRoundFinished {
+        outcome: PotterRoundOutcome::Completed,
+    });
+    events
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -970,5 +1029,93 @@ mod tests {
             message.contains("missing round_configured"),
             "unexpected error: {message}"
         );
+    }
+
+    #[test]
+    fn build_unfinished_round_pre_action_events_replays_session_started_once() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _main = write_main(temp.path(), ".codexpotter/projects/2026/02/01/1");
+        let resolved =
+            resolve_project_paths(temp.path(), Path::new("2026/02/01/1")).expect("resolve");
+
+        let thread_id =
+            codex_protocol::ThreadId::from_string("019ca423-63d9-7641-ae83-db060ad3c000")
+                .expect("thread id");
+        let mut unfinished = UnfinishedRoundPlan {
+            round_current: 1,
+            round_total: 10,
+            thread_id,
+            rollout_path: resolved.workdir.join("rollout.jsonl"),
+            session_started: Some((
+                Some("hello".to_string()),
+                PathBuf::from(".codexpotter/projects/2026/02/01/1/MAIN.md"),
+            )),
+        };
+
+        let events = build_unfinished_round_pre_action_events(&resolved, &mut unfinished);
+
+        assert_eq!(unfinished.session_started, None);
+        assert_eq!(events.len(), 3);
+        let EventMsg::PotterSessionStarted {
+            user_message,
+            working_dir,
+            project_dir,
+            user_prompt_file,
+        } = &events[0]
+        else {
+            panic!("expected PotterSessionStarted, got: {:?}", events[0]);
+        };
+        assert_eq!(user_message.as_deref(), Some("hello"));
+        assert_eq!(working_dir, &resolved.workdir);
+        assert_eq!(project_dir, &resolved.project_dir);
+        assert_eq!(
+            user_prompt_file,
+            &PathBuf::from(".codexpotter/projects/2026/02/01/1/MAIN.md")
+        );
+        let EventMsg::PotterRoundStarted { current, total } = &events[1] else {
+            panic!("expected PotterRoundStarted, got: {:?}", events[1]);
+        };
+        assert_eq!(*current, 1);
+        assert_eq!(*total, 10);
+
+        let EventMsg::PotterRoundFinished { outcome } = &events[2] else {
+            panic!("expected PotterRoundFinished, got: {:?}", events[2]);
+        };
+        assert_eq!(*outcome, PotterRoundOutcome::Completed);
+    }
+
+    #[test]
+    fn build_unfinished_round_pre_action_events_skips_when_session_started_already_consumed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _main = write_main(temp.path(), ".codexpotter/projects/2026/02/01/1");
+        let resolved =
+            resolve_project_paths(temp.path(), Path::new("2026/02/01/1")).expect("resolve");
+
+        let thread_id =
+            codex_protocol::ThreadId::from_string("019ca423-63d9-7641-ae83-db060ad3c000")
+                .expect("thread id");
+        let mut unfinished = UnfinishedRoundPlan {
+            round_current: 2,
+            round_total: 10,
+            thread_id,
+            rollout_path: resolved.workdir.join("rollout.jsonl"),
+            session_started: None,
+        };
+
+        let events = build_unfinished_round_pre_action_events(&resolved, &mut unfinished);
+
+        assert_eq!(unfinished.session_started, None);
+        assert_eq!(events.len(), 2);
+
+        let EventMsg::PotterRoundStarted { current, total } = &events[0] else {
+            panic!("expected PotterRoundStarted, got: {:?}", events[0]);
+        };
+        assert_eq!(*current, 2);
+        assert_eq!(*total, 10);
+
+        let EventMsg::PotterRoundFinished { outcome } = &events[1] else {
+            panic!("expected PotterRoundFinished, got: {:?}", events[1]);
+        };
+        assert_eq!(*outcome, PotterRoundOutcome::Completed);
     }
 }
