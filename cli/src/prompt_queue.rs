@@ -1,24 +1,24 @@
 use std::future::Future;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum NextPrompt {
+pub enum NextPrompt {
     FromQueue(String),
     FromUser(String),
 }
 
 #[derive(Debug)]
-pub(crate) struct PromptQueue {
+pub struct PromptQueue {
     next_prompt: Option<String>,
 }
 
 impl PromptQueue {
-    pub(crate) fn new(initial_prompt: String) -> Self {
+    pub fn new(initial_prompt: String) -> Self {
         Self {
             next_prompt: Some(initial_prompt),
         }
     }
 
-    pub(crate) fn pop_next_prompt<F>(&mut self, pop_queued_prompt: F) -> Option<String>
+    pub fn pop_next_prompt<F>(&mut self, pop_queued_prompt: F) -> Option<String>
     where
         F: FnMut() -> Option<String>,
     {
@@ -26,7 +26,7 @@ impl PromptQueue {
     }
 }
 
-pub(crate) async fn next_prompt_or_prompt_user<F, Fut>(
+pub async fn next_prompt_or_prompt_user<F, Fut>(
     next_prompt: Option<String>,
     prompt_user: F,
 ) -> anyhow::Result<Option<NextPrompt>>
