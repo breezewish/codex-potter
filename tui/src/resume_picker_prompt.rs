@@ -221,6 +221,20 @@ impl ResumePickerScreen {
             return;
         }
 
+        if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+            match key_event.code {
+                KeyCode::Char('p') | KeyCode::Char('P') => {
+                    self.move_selection(-1);
+                    return;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.move_selection(1);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match key_event.code {
             KeyCode::Esc => {
                 self.outcome = Some(ResumePickerOutcome::StartFresh);
@@ -622,6 +636,7 @@ mod tests {
     use super::*;
     use crate::test_backend::VT100Backend;
     use insta::assert_snapshot;
+    use pretty_assertions::assert_eq;
     use ratatui::Terminal;
     use std::time::Duration;
 
@@ -738,5 +753,50 @@ mod tests {
             "resume_picker_table_created_sort_vt100",
             terminal.backend().vt100().screen().contents()
         );
+    }
+
+    #[test]
+    fn resume_picker_ctrl_p_ctrl_n_moves_selection() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let rows = vec![
+            ResumePickerRow {
+                project_path: PathBuf::from("/tmp/a"),
+                user_request: "Fix resume picker timestamps".to_string(),
+                created_at: now - Duration::from_secs(3 * 24 * 60 * 60),
+                updated_at: now - Duration::from_secs(42),
+                git_branch: None,
+            },
+            ResumePickerRow {
+                project_path: PathBuf::from("/tmp/b"),
+                user_request: "Investigate lazy pagination cap".to_string(),
+                created_at: now - Duration::from_secs(24 * 60 * 60),
+                updated_at: now - Duration::from_secs(35 * 60),
+                git_branch: Some("feature/resume".to_string()),
+            },
+            ResumePickerRow {
+                project_path: PathBuf::from("/tmp/c"),
+                user_request: "Explain the codebase".to_string(),
+                created_at: now - Duration::from_secs(2 * 60 * 60),
+                updated_at: now - Duration::from_secs(2 * 60 * 60),
+                git_branch: Some("main".to_string()),
+            },
+        ];
+
+        let mut screen = ResumePickerScreen::new(FrameRequester::test_dummy(), rows, now);
+        screen.set_view_rows(5);
+        screen.selected = 1;
+
+        screen.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        assert_eq!(screen.selected, 0);
+
+        screen.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+        assert_eq!(screen.selected, 1);
+
+        screen.selected = 2;
+        screen.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+        assert_eq!(screen.selected, 2);
+
+        screen.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
+        assert_eq!(screen.selected, 1);
     }
 }
