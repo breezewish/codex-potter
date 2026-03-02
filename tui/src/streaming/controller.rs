@@ -17,7 +17,6 @@ use super::StreamState;
 /// commit animation across streams.
 pub struct StreamController {
     state: StreamState,
-    finishing_after_drain: bool,
     header_emitted: bool,
 }
 
@@ -25,7 +24,6 @@ impl StreamController {
     pub fn new(width: Option<usize>) -> Self {
         Self {
             state: StreamState::new(width),
-            finishing_after_drain: false,
             header_emitted: false,
         }
     }
@@ -67,7 +65,6 @@ impl StreamController {
 
         // Cleanup
         self.state.clear();
-        self.finishing_after_drain = false;
         let cell = self.emit(out_lines);
 
         // `finalize` ends the current "answer stream". Reset state so a subsequent stream starts a

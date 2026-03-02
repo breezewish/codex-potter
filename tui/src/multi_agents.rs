@@ -1,3 +1,9 @@
+//! Rendering helpers for multi-agent (collab / sub-agent) transcript events.
+//!
+//! Note: unlike upstream Codex TUI, codex-potter is transcript-only (no agent
+//! thread picker UI / per-agent transcript view). Upstream picker helpers are
+//! intentionally omitted to keep this crate a focused subset.
+
 use crate::history_cell::PlainHistoryCell;
 use crate::render::line_utils::prefix_lines;
 use crate::text_formatting::truncate_text;
