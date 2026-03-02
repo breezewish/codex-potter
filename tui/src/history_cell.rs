@@ -176,6 +176,12 @@ pub struct PlainHistoryCell {
     lines: Vec<Line<'static>>,
 }
 
+impl PlainHistoryCell {
+    pub fn new(lines: Vec<Line<'static>>) -> Self {
+        Self { lines }
+    }
+}
+
 impl HistoryCell for PlainHistoryCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
         self.lines.clone()

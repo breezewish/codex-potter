@@ -27,6 +27,7 @@ mod markdown;
 mod markdown_render;
 mod markdown_stream;
 mod mention_codec;
+mod multi_agents;
 mod potter_tui;
 mod prompt_history_store;
 mod render;

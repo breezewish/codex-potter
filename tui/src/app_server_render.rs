@@ -906,6 +906,30 @@ impl RenderOnlyProcessor {
                 }
                 self.had_work_activity = true;
             }
+            EventMsg::CollabAgentSpawnBegin(_) => {}
+            EventMsg::CollabAgentSpawnEnd(ev) => {
+                self.on_collab_event(crate::multi_agents::spawn_end(ev))
+            }
+            EventMsg::CollabAgentInteractionBegin(_) => {}
+            EventMsg::CollabAgentInteractionEnd(ev) => {
+                self.on_collab_event(crate::multi_agents::interaction_end(ev));
+            }
+            EventMsg::CollabWaitingBegin(ev) => {
+                self.on_collab_event(crate::multi_agents::waiting_begin(ev))
+            }
+            EventMsg::CollabWaitingEnd(ev) => {
+                self.on_collab_event(crate::multi_agents::waiting_end(ev))
+            }
+            EventMsg::CollabCloseBegin(_) => {}
+            EventMsg::CollabCloseEnd(ev) => {
+                self.on_collab_event(crate::multi_agents::close_end(ev))
+            }
+            EventMsg::CollabResumeBegin(ev) => {
+                self.on_collab_event(crate::multi_agents::resume_begin(ev))
+            }
+            EventMsg::CollabResumeEnd(ev) => {
+                self.on_collab_event(crate::multi_agents::resume_end(ev))
+            }
             EventMsg::Error(ev) => {
                 self.flush_pending_exploring_cell();
                 self.flush_pending_success_ran_cell();
@@ -921,6 +945,21 @@ impl RenderOnlyProcessor {
             }
             _ => {}
         }
+    }
+
+    fn on_collab_event(&mut self, cell: history_cell::PlainHistoryCell) {
+        // Align with upstream behavior: flush any newline-gated agent output before inserting the
+        // collab transcript cell, so ordering matches the semantic "agent explains -> collab
+        // action -> agent continues" flow.
+        if let Some(cell) = self.stream.finalize() {
+            self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
+        }
+        self.flush_pending_exploring_cell();
+        self.flush_pending_success_ran_cell();
+        self.needs_final_message_separator = true;
+        self.app_event_tx
+            .send(AppEvent::InsertHistoryCell(Box::new(cell)));
+        self.had_work_activity = true;
     }
 
     fn flush_pending_exploring_cell(&mut self) {
