@@ -7,7 +7,7 @@ streaming, etc), powered by an external `codex app-server` process.
 Unlike `codex exec`, this tool does **not** run codex-core directly — it launches an external
 `codex app-server` process and renders the streamed events.
 
-This is developer-facing documentation. Start at `README.md` for the full code wiki, and see
+This is developer-facing documentation. Start at `docs/wiki/README.md` for the wiki index, and see
 `core-architecture.md` for the end-to-end flow.
 
 ## Ownership
@@ -75,9 +75,11 @@ Replays a previous CodexPotter project (history-only) and then prompts for a fol
 When `PROJECT_PATH` is omitted, `codex-potter` opens a full-screen picker UI listing resumable
 projects under `<cwd>/.codexpotter/projects`:
 
-- `Enter`: resume the selected project
-- `Esc`: start new (proceed into the normal interactive prompt flow)
-- `Ctrl+C`: quit
+- Navigate: `↑/↓` (or `Ctrl+P/Ctrl+N`), `PageUp/PageDown`
+- Search: type to filter (matches user request, git branch, and project path), `Backspace` deletes
+- Sort: `Tab` toggles `Updated` / `Created` (newest first)
+- Confirm: `Enter` resumes the selected project
+- Cancel: `Esc` starts a new session; `Ctrl+C` quits
 
 At the moment the action picker has a single action:
 

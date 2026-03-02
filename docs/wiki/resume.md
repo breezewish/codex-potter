@@ -20,7 +20,15 @@ codex-potter resume [PROJECT_PATH]
 ```
 
 When `PROJECT_PATH` is omitted, CodexPotter opens a picker UI listing resumable projects under
-`<cwd>/.codexpotter/projects` (press `Esc` to start new, `Ctrl+C` to quit).
+`<cwd>/.codexpotter/projects`.
+
+Picker shortcuts:
+
+- Navigate: `↑/↓` (or `Ctrl+P/Ctrl+N`), `PageUp/PageDown`
+- Search: type to filter (matches user request, git branch, and project path), `Backspace` deletes
+- Sort: `Tab` toggles `Updated` / `Created` (newest first)
+- Confirm: `Enter` resumes the selected project
+- Cancel: `Esc` starts a new session; `Ctrl+C` quits
 
 When `PROJECT_PATH` is provided, it is resolved to a unique progress file (`.../MAIN.md`). See
 `cli.md` for the full resolution algorithm.
