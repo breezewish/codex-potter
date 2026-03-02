@@ -42,7 +42,9 @@ Options:
 - `--codex-bin <path>`: Path to the `codex` binary to launch in app-server mode.
   - Also configurable via `CODEX_BIN` (defaults to `codex`).
 - `--rounds <n>`: Number of turns to run (default: 10; must be >= 1).
-  - For `resume`, this controls how many additional rounds are run after replay.
+  - For `resume`, this controls how many rounds are run when the last recorded round is complete.
+    If the last recorded round is unfinished, the remaining budget is derived from the recorded
+    `round_total` in `potter-rollout.jsonl`.
 - `--sandbox <mode>`: Sandbox mode to request from Codex per turn.
   - One of: `default` (default), `workspace-write`, `read-only`, `danger-full-access`.
   - `default` matches `codex`'s default behavior: no `--sandbox` flag is passed to the app-server
@@ -79,8 +81,10 @@ projects under `<cwd>/.codexpotter/projects`:
 
 At the moment the action picker has a single action:
 
-- `Iterate N more rounds`: continue running additional rounds on the same project directory.
+- When the last recorded round is complete: `Iterate N more rounds`.
   - `N` is controlled by `--rounds` (default: 10).
+- When the last recorded round is unfinished: `Continue & iterate M more rounds`.
+  - `M` is derived from the recorded round budget in `potter-rollout.jsonl`.
 
 When `PROJECT_PATH` is provided, it is resolved to a unique progress file (`.../MAIN.md`) using a
 small candidate set:

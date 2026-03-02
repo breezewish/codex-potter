@@ -88,6 +88,14 @@ pub fn resolve_project_paths(
     })
 }
 
+/// Replay a CodexPotter project directory and optionally continue iterating rounds.
+///
+/// Replay is history-only: it never re-runs tools or executes commands. After rendering replay,
+/// this prompts the user to select a follow-up action.
+///
+/// When the last recorded round is unfinished (EOF without `PotterRoundFinished`), `resume` first
+/// renders the session + round boundary markers before showing the action picker, so the user
+/// always sees the initial prompt and round context first.
 pub async fn run_resume(
     ui: &mut codex_tui::CodexPotterTui,
     cwd: &Path,
@@ -367,6 +375,7 @@ pub async fn run_resume(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Outcome of running `codex-potter resume`.
 pub enum ResumeExit {
     Completed,
     FatalExitRequested,

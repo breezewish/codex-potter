@@ -63,7 +63,9 @@ struct Cli {
 
     /// Number of turns to run (each turn starts a fresh `codex app-server`; must be >= 1).
     ///
-    /// For `resume`, this controls how many additional rounds are run after replay.
+    /// For `resume`, this controls how many rounds are run when the last recorded round is
+    /// complete. If the last recorded round is unfinished, the remaining budget is derived from
+    /// the recorded `round_total` in `potter-rollout.jsonl`.
     #[arg(long, default_value = "10", global = true)]
     rounds: NonZeroUsize,
 

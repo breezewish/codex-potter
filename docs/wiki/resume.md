@@ -1,8 +1,8 @@
 # Resume (`codex-potter resume`)
 
 `codex-potter resume [PROJECT_PATH]` replays a previous CodexPotter project's history and then
-prompts for a follow-up action (currently: **Iterate N more rounds**, where `N` is `--rounds`
-(default: 10)).
+prompts for a follow-up action (continue iterating rounds). The exact action label and budget
+depend on whether the last recorded round is complete or unfinished (see "Action picker").
 
 The implementation is intentionally conservative:
 
@@ -48,6 +48,19 @@ Replay is driven by `potter-rollout.jsonl` (`cli/src/resume.rs`):
 - `round_configured`: triggers replay of the referenced upstream rollout file.
 - `session_succeeded` / `round_finished`: injects summary + boundary markers.
 
+### Unfinished rounds (EOF without `round_finished`)
+
+`potter-rollout.jsonl` is append-only and may end in the middle of a round (e.g. after
+`round_configured` but before a trailing `round_finished`). In that case, `resume` still renders
+the **session started** and **round started** boundary markers *before* showing the action picker,
+so the user always sees the initial prompt and round context first.
+
+Implementation detail (`cli/src/resume.rs`): the pre-action replay for an unfinished round includes
+`EventMsg::PotterRoundStarted` and a synthesized trailing `EventMsg::PotterRoundFinished` with a
+`Completed` outcome so the render-only runner exits cleanly. This synthetic `PotterRoundFinished`
+does not render a "round finished" history cell; it only provides a clean exit boundary for the
+renderer.
+
 Upstream rollout replay (`cli/src/resume.rs`) intentionally only replays the persisted `EventMsg`
 subset:
 
@@ -77,7 +90,10 @@ shares the same interaction model as upstream list selection popups:
 
 Currently the picker contains a single action:
 
-- `Iterate N more rounds` (controlled by `--rounds`, default: 10)
+- When the last recorded round is complete: `Iterate N more rounds` (controlled by `--rounds`,
+  default: 10)
+- When the last recorded round is unfinished: `Continue & iterate M more rounds`, where `M`
+  is derived from the recorded `round_current` / `round_total` in `potter-rollout.jsonl`
 
 ## Continuing after replay
 
@@ -92,6 +108,10 @@ Key behavior:
 - The continue budget is `--rounds` (default: 10) rounds, counted from the resume action.
 - `potter-rollout.jsonl` is append-only; `session_started` is not written again.
 - New upstream rollouts are started via fresh app-server threads, just like a normal session.
+
+When resuming an unfinished round, CodexPotter resumes the existing upstream thread (recorded in
+`potter-rollout.jsonl`) and sends a `Continue` prompt to complete the current round, then starts
+fresh rounds for the remaining budget (`cli/src/round_runner.rs::continue_potter_round`).
 
 There is no explicit locking. Concurrent runs against the same project directory are unsupported
 and may corrupt the append-only logs; corruption is expected to be detected during replay and to
