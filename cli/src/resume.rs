@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::io::BufRead as _;
 use std::num::NonZeroUsize;
@@ -736,7 +738,7 @@ fn read_upstream_rollout_event_msgs(rollout_path: &Path) -> anyhow::Result<Vec<E
         out.push(msg);
     }
 
-    Ok(out)
+    Ok(filter_pending_interactive_prompts_for_replay(out))
 }
 
 /// Build the minimal replay events needed to show an unfinished round boundary before prompting.
@@ -764,6 +766,173 @@ fn build_unfinished_round_pre_action_events(
         outcome: PotterRoundOutcome::Completed,
     });
     events
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ElicitationRequestKey {
+    server_name: String,
+    request_id: codex_protocol::mcp::RequestId,
+}
+
+impl ElicitationRequestKey {
+    fn new(server_name: String, request_id: codex_protocol::mcp::RequestId) -> Self {
+        Self {
+            server_name,
+            request_id,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct PendingInteractiveReplayState {
+    exec_approval_call_ids: HashSet<String>,
+    exec_approval_call_ids_by_turn_id: HashMap<String, Vec<String>>,
+    patch_approval_call_ids: HashSet<String>,
+    patch_approval_call_ids_by_turn_id: HashMap<String, Vec<String>>,
+    elicitation_requests: HashSet<ElicitationRequestKey>,
+    request_user_input_call_ids: HashSet<String>,
+    request_user_input_call_ids_by_turn_id: HashMap<String, Vec<String>>,
+}
+
+impl PendingInteractiveReplayState {
+    fn note_event_msg(&mut self, msg: &EventMsg) {
+        match msg {
+            EventMsg::ExecApprovalRequest(ev) => {
+                let approval_id = ev.effective_approval_id();
+                self.exec_approval_call_ids.insert(approval_id.clone());
+                self.exec_approval_call_ids_by_turn_id
+                    .entry(ev.turn_id.clone())
+                    .or_default()
+                    .push(approval_id);
+            }
+            EventMsg::ExecCommandBegin(ev) => {
+                self.exec_approval_call_ids.remove(&ev.call_id);
+                Self::remove_call_id_from_turn_map(
+                    &mut self.exec_approval_call_ids_by_turn_id,
+                    &ev.call_id,
+                );
+            }
+            EventMsg::ApplyPatchApprovalRequest(ev) => {
+                self.patch_approval_call_ids.insert(ev.call_id.clone());
+                self.patch_approval_call_ids_by_turn_id
+                    .entry(ev.turn_id.clone())
+                    .or_default()
+                    .push(ev.call_id.clone());
+            }
+            EventMsg::PatchApplyBegin(ev) => {
+                self.patch_approval_call_ids.remove(&ev.call_id);
+                Self::remove_call_id_from_turn_map(
+                    &mut self.patch_approval_call_ids_by_turn_id,
+                    &ev.call_id,
+                );
+            }
+            EventMsg::ElicitationRequest(ev) => {
+                self.elicitation_requests.insert(ElicitationRequestKey::new(
+                    ev.server_name.clone(),
+                    ev.id.clone(),
+                ));
+            }
+            EventMsg::RequestUserInput(ev) => {
+                self.request_user_input_call_ids.insert(ev.call_id.clone());
+                self.request_user_input_call_ids_by_turn_id
+                    .entry(ev.turn_id.clone())
+                    .or_default()
+                    .push(ev.call_id.clone());
+            }
+            EventMsg::TurnComplete(ev) => {
+                self.clear_exec_approval_turn(&ev.turn_id);
+                self.clear_patch_approval_turn(&ev.turn_id);
+                self.clear_request_user_input_turn(&ev.turn_id);
+            }
+            EventMsg::TurnAborted(ev) => {
+                if let Some(turn_id) = &ev.turn_id {
+                    self.clear_exec_approval_turn(turn_id);
+                    self.clear_patch_approval_turn(turn_id);
+                    self.clear_request_user_input_turn(turn_id);
+                }
+            }
+            EventMsg::ShutdownComplete => self.clear(),
+            _ => {}
+        }
+    }
+
+    fn should_replay_snapshot_event_msg(&self, msg: &EventMsg) -> bool {
+        match msg {
+            EventMsg::ExecApprovalRequest(ev) => self
+                .exec_approval_call_ids
+                .contains(&ev.effective_approval_id()),
+            EventMsg::ApplyPatchApprovalRequest(ev) => {
+                self.patch_approval_call_ids.contains(&ev.call_id)
+            }
+            EventMsg::ElicitationRequest(ev) => {
+                self.elicitation_requests
+                    .contains(&ElicitationRequestKey::new(
+                        ev.server_name.clone(),
+                        ev.id.clone(),
+                    ))
+            }
+            EventMsg::RequestUserInput(ev) => {
+                self.request_user_input_call_ids.contains(&ev.call_id)
+            }
+            _ => true,
+        }
+    }
+
+    fn clear_request_user_input_turn(&mut self, turn_id: &str) {
+        if let Some(call_ids) = self.request_user_input_call_ids_by_turn_id.remove(turn_id) {
+            for call_id in call_ids {
+                self.request_user_input_call_ids.remove(&call_id);
+            }
+        }
+    }
+
+    fn clear_exec_approval_turn(&mut self, turn_id: &str) {
+        if let Some(call_ids) = self.exec_approval_call_ids_by_turn_id.remove(turn_id) {
+            for call_id in call_ids {
+                self.exec_approval_call_ids.remove(&call_id);
+            }
+        }
+    }
+
+    fn clear_patch_approval_turn(&mut self, turn_id: &str) {
+        if let Some(call_ids) = self.patch_approval_call_ids_by_turn_id.remove(turn_id) {
+            for call_id in call_ids {
+                self.patch_approval_call_ids.remove(&call_id);
+            }
+        }
+    }
+
+    fn remove_call_id_from_turn_map(
+        call_ids_by_turn_id: &mut HashMap<String, Vec<String>>,
+        call_id: &str,
+    ) {
+        call_ids_by_turn_id.retain(|_, call_ids| {
+            call_ids.retain(|queued_call_id| queued_call_id != call_id);
+            !call_ids.is_empty()
+        });
+    }
+
+    fn clear(&mut self) {
+        self.exec_approval_call_ids.clear();
+        self.exec_approval_call_ids_by_turn_id.clear();
+        self.patch_approval_call_ids.clear();
+        self.patch_approval_call_ids_by_turn_id.clear();
+        self.elicitation_requests.clear();
+        self.request_user_input_call_ids.clear();
+        self.request_user_input_call_ids_by_turn_id.clear();
+    }
+}
+
+fn filter_pending_interactive_prompts_for_replay(events: Vec<EventMsg>) -> Vec<EventMsg> {
+    let mut state = PendingInteractiveReplayState::default();
+    for msg in &events {
+        state.note_event_msg(msg);
+    }
+
+    events
+        .into_iter()
+        .filter(|msg| state.should_replay_snapshot_event_msg(msg))
+        .collect()
 }
 
 #[cfg(test)]
@@ -865,6 +1034,65 @@ mod tests {
             panic!("expected agent_message, got: {:?}", events[0]);
         };
         assert_eq!(ev.message, "hello");
+    }
+
+    #[test]
+    fn read_upstream_rollout_event_msgs_filters_resolved_exec_approval_prompt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let rollout_path = temp.path().join("rollout.jsonl");
+        std::fs::write(
+            &rollout_path,
+            r#"{"timestamp":"2026-02-28T00:00:00.000Z","type":"event_msg","payload":{"type":"exec_approval_request","call_id":"call-1","turn_id":"turn-1","command":["echo","hi"],"cwd":"/tmp","parsed_cmd":[]}}
+{"timestamp":"2026-02-28T00:00:01.000Z","type":"event_msg","payload":{"type":"exec_command_begin","call_id":"call-1","turn_id":"turn-1","command":["echo","hi"],"cwd":"/tmp","parsed_cmd":[]}}
+"#,
+        )
+        .expect("write rollout");
+
+        let events = read_upstream_rollout_event_msgs(&rollout_path).expect("read events");
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], EventMsg::ExecCommandBegin(ev) if ev.call_id == "call-1"),
+            "unexpected events: {events:?}"
+        );
+    }
+
+    #[test]
+    fn read_upstream_rollout_event_msgs_keeps_pending_request_user_input() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let rollout_path = temp.path().join("rollout.jsonl");
+        std::fs::write(
+            &rollout_path,
+            r#"{"timestamp":"2026-02-28T00:00:00.000Z","type":"event_msg","payload":{"type":"request_user_input","call_id":"call-1","turn_id":"turn-1","questions":[]}}
+"#,
+        )
+        .expect("write rollout");
+
+        let events = read_upstream_rollout_event_msgs(&rollout_path).expect("read events");
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], EventMsg::RequestUserInput(ev) if ev.call_id == "call-1"),
+            "unexpected events: {events:?}"
+        );
+    }
+
+    #[test]
+    fn read_upstream_rollout_event_msgs_drops_resolved_request_user_input_after_turn_complete() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let rollout_path = temp.path().join("rollout.jsonl");
+        std::fs::write(
+            &rollout_path,
+            r#"{"timestamp":"2026-02-28T00:00:00.000Z","type":"event_msg","payload":{"type":"request_user_input","call_id":"call-1","turn_id":"turn-1","questions":[]}}
+{"timestamp":"2026-02-28T00:00:01.000Z","type":"event_msg","payload":{"type":"turn_complete","turn_id":"turn-1","last_agent_message":null}}
+"#,
+        )
+        .expect("write rollout");
+
+        let events = read_upstream_rollout_event_msgs(&rollout_path).expect("read events");
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], EventMsg::TurnComplete(ev) if ev.turn_id == "turn-1"),
+            "unexpected events: {events:?}"
+        );
     }
 
     #[test]

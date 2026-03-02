@@ -111,11 +111,13 @@ mod tests {
     #[test]
     fn activity_event_treats_turn_complete_last_message_as_activity() {
         let msg = EventMsg::TurnComplete(TurnCompleteEvent {
+            turn_id: "turn-1".to_string(),
             last_agent_message: Some("done".to_string()),
         });
         assert!(is_activity_event(&msg));
 
         let msg = EventMsg::TurnComplete(TurnCompleteEvent {
+            turn_id: "turn-1".to_string(),
             last_agent_message: None,
         });
         assert!(!is_activity_event(&msg));

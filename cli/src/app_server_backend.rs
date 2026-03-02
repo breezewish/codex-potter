@@ -1109,6 +1109,7 @@ mod stream_recovery_tests {
             Event {
                 id: "turn-complete".into(),
                 msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                    turn_id: "turn-1".to_string(),
                     last_agent_message: None,
                 }),
             },

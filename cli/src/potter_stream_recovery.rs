@@ -207,10 +207,12 @@ mod tests {
         };
 
         assert!(state.should_suppress_turn_complete(&TurnCompleteEvent {
+            turn_id: "turn-1".to_string(),
             last_agent_message: None,
         }));
 
         assert!(!state.should_suppress_turn_complete(&TurnCompleteEvent {
+            turn_id: "turn-1".to_string(),
             last_agent_message: Some("done".to_string()),
         }));
     }

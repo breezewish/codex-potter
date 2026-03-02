@@ -737,6 +737,7 @@ impl RenderOnlyProcessor {
             }
             EventMsg::TurnStarted(TurnStartedEvent {
                 model_context_window,
+                ..
             }) => {
                 self.model_context_window = model_context_window;
             }
@@ -1902,6 +1903,7 @@ mod tests {
             Event {
                 id: "turn-started".into(),
                 msg: EventMsg::TurnStarted(TurnStartedEvent {
+                    turn_id: "turn-1".to_string(),
                     model_context_window: None,
                 }),
             },
@@ -2845,6 +2847,7 @@ mod tests {
         proc.handle_codex_event(Event {
             id: "turn-complete".into(),
             msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
                 last_agent_message: Some("hello".to_string()),
             }),
         });
@@ -2942,6 +2945,7 @@ mod tests {
         proc.handle_codex_event(Event {
             id: "turn-complete".into(),
             msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
                 last_agent_message: None,
             }),
         });
@@ -3166,6 +3170,7 @@ mod tests {
         proc.handle_codex_event(Event {
             id: "turn-complete".into(),
             msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
                 last_agent_message: None,
             }),
         });
@@ -3246,6 +3251,7 @@ mod tests {
         proc.handle_codex_event(Event {
             id: "turn-complete".into(),
             msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
                 last_agent_message: None,
             }),
         });
@@ -3868,6 +3874,7 @@ mod tests {
         proc.handle_codex_event(Event {
             id: "turn-complete".into(),
             msg: EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".to_string(),
                 last_agent_message: None,
             }),
         });

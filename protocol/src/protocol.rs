@@ -9,10 +9,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::ThreadId;
+use crate::approvals::ApplyPatchApprovalRequestEvent;
+use crate::approvals::ElicitationRequestEvent;
+use crate::approvals::ExecApprovalRequestEvent;
 use crate::num_format::format_with_separators;
 use crate::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crate::parse_command::ParsedCommand;
 use crate::plan_tool::UpdatePlanArgs;
+use crate::request_user_input::RequestUserInputEvent;
 use crate::user_input::UserInput;
 use serde::Deserialize;
 use serde::Serialize;
@@ -186,19 +190,36 @@ pub enum EventMsg {
 
     WebSearchEnd(WebSearchEndEvent),
 
+    /// Notification that the server is about to execute a command.
+    ExecCommandBegin(ExecCommandBeginEvent),
+
     ExecCommandEnd(ExecCommandEndEvent),
 
     /// Notification that the agent attached a local image via the view_image tool.
     ViewImageToolCall(ViewImageToolCallEvent),
 
+    ExecApprovalRequest(ExecApprovalRequestEvent),
+
+    RequestUserInput(RequestUserInputEvent),
+
+    ElicitationRequest(ElicitationRequestEvent),
+
+    ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
+
     /// Notification advising the user that something they are using has been
     /// deprecated and should be phased out.
     DeprecationNotice(DeprecationNoticeEvent),
+
+    /// Notification that the agent is about to apply a code patch.
+    PatchApplyBegin(PatchApplyBeginEvent),
 
     /// Notification that a patch application has finished.
     PatchApplyEnd(PatchApplyEndEvent),
 
     PlanUpdate(UpdatePlanArgs),
+
+    /// Notification that the agent is shutting down.
+    ShutdownComplete,
 
     #[serde(other)]
     Unknown,
@@ -277,11 +298,17 @@ pub struct ThreadRolledBackEvent {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TurnCompleteEvent {
+    /// Turn identifier. Uses `#[serde(default)]` for backward compatibility with older senders.
+    #[serde(default)]
+    pub turn_id: String,
     pub last_agent_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TurnStartedEvent {
+    /// Turn identifier. Uses `#[serde(default)]` for backward compatibility with older senders.
+    #[serde(default)]
+    pub turn_id: String,
     // TODO(aibrahim): make this not optional
     pub model_context_window: Option<i64>,
 }
@@ -559,6 +586,28 @@ pub enum ExecCommandSource {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExecCommandBeginEvent {
+    /// Identifier so this can be paired with the ExecCommandEnd event.
+    pub call_id: String,
+    /// Identifier for the underlying PTY process (when available).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_id: Option<String>,
+    /// Turn ID that this command belongs to.
+    pub turn_id: String,
+    /// The command to be executed.
+    pub command: Vec<String>,
+    /// The command's working directory.
+    pub cwd: PathBuf,
+    pub parsed_cmd: Vec<ParsedCommand>,
+    /// Where the command originated. Defaults to Agent for backward compatibility.
+    #[serde(default)]
+    pub source: ExecCommandSource,
+    /// Raw input sent to a unified exec session (if this is an interaction event).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction_input: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ExecCommandEndEvent {
     /// Identifier for the ExecCommandBegin that finished.
     pub call_id: String,
@@ -609,6 +658,22 @@ pub struct DeprecationNoticeEvent {
     /// Optional extra guidance, such as migration steps or rationale.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PatchApplyBeginEvent {
+    /// Identifier so this can be paired with the PatchApplyEnd event.
+    pub call_id: String,
+    /// Turn ID that this patch belongs to.
+    /// Uses `#[serde(default)]` for backwards compatibility.
+    #[serde(default)]
+    pub turn_id: String,
+    /// If true, there was no ApplyPatchApprovalRequest for this patch.
+    #[serde(default)]
+    pub auto_approved: bool,
+    /// The changes to be applied.
+    #[serde(default)]
+    pub changes: HashMap<PathBuf, FileChange>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -720,6 +785,8 @@ pub enum FileChange {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TurnAbortedEvent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
     pub reason: TurnAbortReason,
 }
 
