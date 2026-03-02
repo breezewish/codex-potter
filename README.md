@@ -47,35 +47,15 @@ codex-potter --yolo
 
 ⚠️ **Note:** Unlike Codex, every follow up prompt turns into a **new** task, **not sharing previous contexts**. Assign tasks to CodexPotter, instead of chat with it.
 
-## 🔁 Resume a project
-
-Replay history for an existing `.codexpotter` project and optionally continue iterating:
-
-```sh
-# Open the resume picker (no path)
-codex-potter resume
-
-# Or resume directly by project path
-codex-potter resume 2026/02/01/1
-
-# Continue in yolo mode (optional)
-codex-potter resume 2026/02/01/1 --yolo
-```
-
-In the picker: `enter` to resume, `esc` to start new, `ctrl + c` to quit.
-
-&ensp;
-
 ## Roadmap
 
 - [x] Skill popup
 - [x] Resume (history replay + continue iterating)
-- [ ] Project management
+- [x] Better handling of stream disconnect / similar network issues
 - [ ] Better sandbox support
 - [ ] Interoperability with codex CLI sessions (for follow-up prompts)
 - [ ] Allow opting out knowledge base
 - [ ] Recommended skills for PRD and code review
-- [x] Better handling of stream disconnect / similar network issues
 
 &ensp;
 
