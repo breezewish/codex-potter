@@ -52,6 +52,7 @@ Behavior related
 - A customized banner on startup
 - Additionally shows gitignore startup hint
 - No syntax theme picker/override (and no custom `.tmTheme` loading): syntax highlighting always uses the adaptive default (Catppuccin Latte/Mocha based on terminal background).
+- Diff rendering is not syntax-theme-aware (does not read TextMate diff scopes from the active syntax theme).
 - Multi-agent collab is transcript-only: no agent thread picker UI (no per-agent transcript view).
 - No streaming "Proposed Plan" block (no plan stream controller); plan updates render only via `EventMsg::PlanUpdate`.
 - Resume picker UI exists for `codex-potter resume` (no path); it uses a `User Request` column (CodexPotter projects) instead of upstream `Conversation`.

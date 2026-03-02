@@ -1,3 +1,9 @@
+//! Renders `FileChange` diffs for the transcript.
+//!
+//! Note: unlike upstream Codex TUI, this renderer is not syntax-theme-aware; it
+//! uses a fixed palette and does not read TextMate diff scopes (e.g.
+//! `markup.inserted` / `markup.deleted`) from the active syntax theme.
+
 use diffy::Hunk;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
